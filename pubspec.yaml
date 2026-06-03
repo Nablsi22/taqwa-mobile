@@ -39,6 +39,7 @@ dev_dependencies:
   retrofit_generator: ^10.2.1
   json_serializable: ^6.11.2
   mockito: ^5.6.3
+  flutter_launcher_icons: ^0.14.4
 
 flutter:
   uses-material-design: true
@@ -55,3 +56,10 @@ flutter:
     - family: AmiriQuran
       fonts:
         - asset: assets/fonts/AmiriQuran-Regular.ttf
+
+flutter_launcher_icons:
+  ios: true
+  android: false
+  remove_alpha_ios: true
+  background_color_ios: "#1B4F72"
+  image_path: "assets/icons/app_icon_1024.png"
