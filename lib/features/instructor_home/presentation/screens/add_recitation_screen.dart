@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:dio/dio.dart';
 import '../../../../core/theme/taqwa_colors.dart';
+import '../../../../core/widgets/points_display.dart';
 import '../../../../core/constants/quran_metadata.dart';
 import '../../../../core/constants/quran_ayat_metadata.dart';
 import '../../../recitation/data/recitation_api.dart';
@@ -8,6 +10,11 @@ import '../../../../core/network/api_client.dart';
 
 /// Mode for an individual segment inside a session.
 enum _SegmentMode { fullSurahs, ayaRange }
+
+/// Top-level branch selector: Quran recitation (existing flow) vs the
+/// Nawawi-40 hadith flow. Default is [quran] so the screen opens exactly
+/// as before.
+enum _RecitationTab { quran, hadith }
 
 /// A single memorization segment in a multi-segment session.
 /// - `fullSurahs` mode: one or more complete suras (multi-select).
@@ -110,6 +117,15 @@ class _AddRecitationScreenState extends State<AddRecitationScreen> {
   final List<_RecitationSegment> _segments = [];
   int _nextSegmentId = 0;
 
+  // ── Hadith (Nawawi 40) branch state. All additive — the Quran flow
+  //    never reads these. ──
+  _RecitationTab _tab = _RecitationTab.quran;
+  List<HadithRule> _hadithRules = [];
+  bool _loadingRules = false;
+  bool _rulesLoaded = false;
+  int? _selectedHadith;
+  bool _savingHadith = false;
+
   /// Per-segment rating options (DID_NOT_MEMORIZE is intentionally absent —
   /// it's a session-level state, not a segment rating).
   static const List<Map<String, dynamic>> _segmentRatings = [
@@ -117,6 +133,36 @@ class _AddRecitationScreenState extends State<AddRecitationScreen> {
     {'value': 'GOOD',      'label': 'جيد',     'icon': Icons.thumb_up, 'color': Color(0xFF2E86C1)},
     {'value': 'REPEAT',    'label': 'إعادة',   'icon': Icons.replay, 'color': Color(0xFFD4AC0D)},
   ];
+
+  // ── Arabic UI strings for the Hadith branch, built from verified
+  //    codepoint arrays (String.fromCharCodes) per project convention.
+  //    Each array's hex was round-trip verified before insertion. ──
+  static final String _kQuranTab = String.fromCharCodes(
+      [0x0627, 0x0644, 0x0642, 0x0631, 0x0622, 0x0646, 0x0020, 0x0627, 0x0644, 0x0643, 0x0631, 0x064a, 0x0645]);
+  static final String _kHadithTab = String.fromCharCodes(
+      [0x0627, 0x0644, 0x0623, 0x0631, 0x0628, 0x0639, 0x064a, 0x0646, 0x0020, 0x0627, 0x0644, 0x0646, 0x0648, 0x0648, 0x064a, 0x0629]);
+  static final String _kChooseHadith = String.fromCharCodes(
+      [0x0627, 0x062e, 0x062a, 0x0631, 0x0020, 0x0627, 0x0644, 0x062d, 0x062f, 0x064a, 0x062b]);
+  static final String _kTapToChoose = String.fromCharCodes(
+      [0x0627, 0x0636, 0x063a, 0x0637, 0x0020, 0x0644, 0x0627, 0x062e, 0x062a, 0x064a, 0x0627, 0x0631, 0x0020, 0x0627, 0x0644, 0x062d, 0x062f, 0x064a, 0x062b]);
+  static final String _kHadithWord = String.fromCharCodes(
+      [0x0627, 0x0644, 0x062d, 0x062f, 0x064a, 0x062b]);
+  static final String _kSavedOk = String.fromCharCodes(
+      [0x062a, 0x0645, 0x0020, 0x062a, 0x0633, 0x062c, 0x064a, 0x0644, 0x0020, 0x0627, 0x0644, 0x062d, 0x062f, 0x064a, 0x062b, 0x0020, 0x0628, 0x0646, 0x062c, 0x0627, 0x062d]);
+  static final String _kAlreadyRecorded = String.fromCharCodes(
+      [0x062a, 0x0645, 0x0020, 0x062a, 0x0633, 0x062c, 0x064a, 0x0644, 0x0020, 0x0647, 0x0630, 0x0627, 0x0020, 0x0627, 0x0644, 0x062d, 0x062f, 0x064a, 0x062b, 0x0020, 0x0645, 0x0633, 0x0628, 0x0642, 0x0627, 0x064b, 0x0020, 0x0644, 0x0647, 0x0630, 0x0627, 0x0020, 0x0627, 0x0644, 0x0637, 0x0627, 0x0644, 0x0628]);
+  static final String _kLoadError = String.fromCharCodes(
+      [0x062a, 0x0639, 0x0630, 0x0651, 0x0631, 0x0020, 0x062a, 0x062d, 0x0645, 0x064a, 0x0644, 0x0020, 0x0642, 0x0627, 0x0626, 0x0645, 0x0629, 0x0020, 0x0627, 0x0644, 0x0623, 0x062d, 0x0627, 0x062f, 0x064a, 0x062b]);
+  static final String _kPleaseChoose = String.fromCharCodes(
+      [0x064a, 0x0631, 0x062c, 0x0649, 0x0020, 0x0627, 0x062e, 0x062a, 0x064a, 0x0627, 0x0631, 0x0020, 0x0627, 0x0644, 0x062d, 0x062f, 0x064a, 0x062b]);
+  static final String _kSearchHint = String.fromCharCodes(
+      [0x0628, 0x062d, 0x062b, 0x002e, 0x002e, 0x002e]);
+  static final String _kLoading = String.fromCharCodes(
+      [0x062c, 0x0627, 0x0631, 0x064a, 0x0020, 0x0627, 0x0644, 0x062a, 0x062d, 0x0645, 0x064a, 0x0644, 0x002e, 0x002e, 0x002e]);
+  static final String _kSaveLabel = String.fromCharCodes(
+      [0x062d, 0x0641, 0x0638, 0x0020, 0x0627, 0x0644, 0x062a, 0x0633, 0x0645, 0x064a, 0x0639]);
+  static final String _kGenericError = String.fromCharCodes(
+      [0x062d, 0x062f, 0x062b, 0x0020, 0x062e, 0x0637, 0x0623]);
 
   @override
   void initState() {
@@ -361,29 +407,354 @@ class _AddRecitationScreenState extends State<AddRecitationScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _buildDateCard(),
+              _buildModeToggle(),
               const SizedBox(height: 12),
-              _buildDidNotMemorizeToggle(),
-              const SizedBox(height: 12),
-              if (!_didNotMemorize) ...[
-                for (int i = 0; i < _segments.length; i++) ...[
-                  _buildSegmentCard(i, _segments[i]),
+              if (_tab == _RecitationTab.quran) ...[
+                _buildDateCard(),
+                const SizedBox(height: 12),
+                _buildDidNotMemorizeToggle(),
+                const SizedBox(height: 12),
+                if (!_didNotMemorize) ...[
+                  for (int i = 0; i < _segments.length; i++) ...[
+                    _buildSegmentCard(i, _segments[i]),
+                    const SizedBox(height: 12),
+                  ],
+                  _buildAddSegmentButton(),
+                  const SizedBox(height: 12),
+                  if (_totalPages > 0) _buildTotalPagesCard(),
+                  if (_totalPages > 0) const SizedBox(height: 12),
+                ],
+                _buildHomeworkSection(),
+                const SizedBox(height: 24),
+                _buildSaveButton(),
+                const SizedBox(height: 32),
+              ] else ...[
+                _buildHadithPickerCard(),
+                const SizedBox(height: 12),
+                if (_selectedHadith != null) ...[
+                  _buildHadithSelectedCard(),
                   const SizedBox(height: 12),
                 ],
-                _buildAddSegmentButton(),
-                const SizedBox(height: 12),
-                if (_totalPages > 0) _buildTotalPagesCard(),
-                if (_totalPages > 0) const SizedBox(height: 12),
+                _buildHadithSaveButton(),
+                const SizedBox(height: 32),
               ],
-              _buildHomeworkSection(),
-              const SizedBox(height: 24),
-              _buildSaveButton(),
-              const SizedBox(height: 32),
             ],
           ),
         ),
       ),
     );
+  }
+
+  // ── Top-level branch toggle: Quran | Nawawi-40 Hadith ──
+  Widget _buildModeToggle() {
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withValues(alpha: 0.03),
+              blurRadius: 10,
+              offset: const Offset(0, 2)),
+        ],
+      ),
+      child: Row(
+        children: [
+          _tabChip(
+            label: _kQuranTab,
+            icon: Icons.menu_book_rounded,
+            selected: _tab == _RecitationTab.quran,
+            onTap: () => setState(() => _tab = _RecitationTab.quran),
+          ),
+          _tabChip(
+            label: _kHadithTab,
+            icon: Icons.auto_stories_rounded,
+            selected: _tab == _RecitationTab.hadith,
+            onTap: () {
+              setState(() => _tab = _RecitationTab.hadith);
+              _ensureHadithRulesLoaded();
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _tabChip({
+    required String label,
+    required IconData icon,
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
+    return Expanded(
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          decoration: BoxDecoration(
+            color: selected ? TaqwaColors.domeBlue : Colors.transparent,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon,
+                  size: 18,
+                  color: selected ? Colors.white : Colors.grey.shade500),
+              const SizedBox(width: 6),
+              Text(label,
+                  style: TextStyle(
+                      fontFamily: 'Cairo',
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                      color: selected ? Colors.white : Colors.grey.shade600)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // HADITH (Nawawi 40) branch — lazy rule load, picker, preview, save
+  // ═══════════════════════════════════════════════════════════════════
+
+  /// Lazily fetch the 42 rules the first time the hadith tab is opened.
+  /// Guarded by [_rulesLoaded]/[_loadingRules] so it runs at most once.
+  Future<void> _ensureHadithRulesLoaded() async {
+    if (_rulesLoaded || _loadingRules) return;
+    setState(() => _loadingRules = true);
+    try {
+      final rules = await _recitationApi.getHadithRules();
+      if (!mounted) return;
+      setState(() {
+        _hadithRules = rules;
+        _rulesLoaded = true;
+        _loadingRules = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loadingRules = false);
+      _showError(_kLoadError);
+    }
+  }
+
+  /// The rule matching the current selection, or null.
+  HadithRule? get _selectedRule {
+    final n = _selectedHadith;
+    if (n == null) return null;
+    for (final r in _hadithRules) {
+      if (r.hadithNumber == n) return r;
+    }
+    return null;
+  }
+
+  Future<void> _openHadithPicker() async {
+    if (_hadithRules.isEmpty) {
+      await _ensureHadithRulesLoaded();
+      if (!mounted || _hadithRules.isEmpty) return;
+    }
+    final picked = await showModalBottomSheet<int>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _HadithPickerSheet(
+        rules: _hadithRules,
+        currentHadith: _selectedHadith,
+      ),
+    );
+    if (picked != null) {
+      setState(() => _selectedHadith = picked);
+    }
+  }
+
+  Widget _buildHadithPickerCard() {
+    final hasSelection = _selectedHadith != null;
+    return _buildSectionCard(
+      icon: Icons.auto_stories_rounded,
+      title: _kChooseHadith,
+      child: InkWell(
+        onTap: _loadingRules ? null : _openHadithPicker,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: hasSelection
+                ? TaqwaColors.domeBlue.withValues(alpha: 0.04)
+                : Colors.grey.shade50,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+                color: hasSelection
+                    ? TaqwaColors.domeBlue.withValues(alpha: 0.2)
+                    : Colors.grey.shade200),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                  hasSelection ? Icons.menu_book_rounded : Icons.touch_app,
+                  color: hasSelection
+                      ? TaqwaColors.domeBlue
+                      : Colors.grey.shade400,
+                  size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _loadingRules
+                    ? Text(_kLoading,
+                        style: TextStyle(
+                            fontFamily: 'Cairo',
+                            fontSize: 14,
+                            color: Colors.grey.shade500))
+                    : Text(
+                        hasSelection
+                            ? '$_kHadithWord $_selectedHadith'
+                            : _kTapToChoose,
+                        style: TextStyle(
+                            fontFamily: 'Cairo',
+                            fontSize: 14.5,
+                            fontWeight: hasSelection
+                                ? FontWeight.bold
+                                : FontWeight.w500,
+                            color: hasSelection
+                                ? TaqwaColors.domeBlue
+                                : Colors.grey.shade400),
+                      ),
+              ),
+              Icon(Icons.arrow_drop_down, color: Colors.grey.shade400),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Selected hadith + its base points, rendered via [PointsDisplay].
+  Widget _buildHadithSelectedCard() {
+    final rule = _selectedRule;
+    if (rule == null) return const SizedBox.shrink();
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            TaqwaColors.islamicGreen.withValues(alpha: 0.10),
+            TaqwaColors.islamicGreen.withValues(alpha: 0.04),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border:
+            Border.all(color: TaqwaColors.islamicGreen.withValues(alpha: 0.25)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+                color: TaqwaColors.islamicGreen,
+                borderRadius: BorderRadius.circular(12)),
+            child: const Icon(Icons.workspace_premium_rounded,
+                color: Colors.white, size: 22),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Text('$_kHadithWord ${rule.hadithNumber}',
+                style: const TextStyle(
+                    fontFamily: 'Cairo',
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: TaqwaColors.domeBlue)),
+          ),
+          PointsDisplay(
+            value: rule.basePoints,
+            size: PointsDisplaySize.large,
+            showLabel: true,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHadithSaveButton() {
+    return SizedBox(
+      width: double.infinity,
+      height: 52,
+      child: ElevatedButton(
+        onPressed: _savingHadith ? null : _saveHadith,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: TaqwaColors.islamicGreen,
+          foregroundColor: Colors.white,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          elevation: 0,
+        ),
+        child: _savingHadith
+            ? const SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(
+                    color: Colors.white, strokeWidth: 2.5))
+            : Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                const Icon(Icons.save, size: 20),
+                const SizedBox(width: 8),
+                Text(_kSaveLabel,
+                    style: const TextStyle(
+                        fontFamily: 'Cairo',
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold)),
+              ]),
+      ),
+    );
+  }
+
+  Future<void> _saveHadith() async {
+    final hadithNumber = _selectedHadith;
+    if (hadithNumber == null) {
+      return _showError(_kPleaseChoose);
+    }
+    setState(() => _savingHadith = true);
+    try {
+      final result = await _recitationApi.recordHadithRecitation(
+        studentId: widget.studentId,
+        hadithNumber: hadithNumber,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Row(
+            mainAxisSize: MainAxisSize.min,
+            textDirection: TextDirection.rtl,
+            children: [
+              Text(_kSavedOk,
+                  style: const TextStyle(fontFamily: 'Cairo'),
+                  textDirection: TextDirection.rtl),
+              const SizedBox(width: 8),
+              PointsDisplay(
+                value: result.pointsAwarded,
+                showLabel: true,
+                colorize: false,
+                color: Colors.white,
+              ),
+            ],
+          ),
+          backgroundColor: TaqwaColors.islamicGreen,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ));
+        Navigator.pop(context, true);
+      }
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 409) {
+        _showError(_kAlreadyRecorded);
+      } else {
+        _showError(_kGenericError);
+      }
+    } catch (_) {
+      _showError(_kGenericError);
+    } finally {
+      if (mounted) setState(() => _savingHadith = false);
+    }
   }
 
   // ── Date ──
@@ -1392,6 +1763,133 @@ class _AyaSurahPickerSheetState extends State<_AyaSurahPickerSheet> {
                         ? const Icon(Icons.check_circle,
                             color: TaqwaColors.islamicGreen)
                         : null,
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// HADITH PICKER (single-select bottom sheet) — Nawawi 40
+//
+// Modeled on _AyaSurahPickerSheet. Filters by hadith number or title;
+// each row shows «الحديث N» with its base points «— M نقطة» rendered
+// through the design-system PointsDisplay widget.
+// ═══════════════════════════════════════════════════════════════════
+class _HadithPickerSheet extends StatefulWidget {
+  final List<HadithRule> rules;
+  final int? currentHadith;
+  const _HadithPickerSheet({required this.rules, this.currentHadith});
+
+  @override
+  State<_HadithPickerSheet> createState() => _HadithPickerSheetState();
+}
+
+class _HadithPickerSheetState extends State<_HadithPickerSheet> {
+  String _query = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final filtered = widget.rules.where((r) {
+      if (_query.isEmpty) return true;
+      final title = r.title ?? '';
+      return r.hadithNumber.toString().contains(_query) ||
+          title.contains(_query);
+    }).toList();
+
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Container(
+        height: MediaQuery.of(context).size.height * 0.75,
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Column(
+          children: [
+            const SizedBox(height: 12),
+            Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(2))),
+            const SizedBox(height: 16),
+            Text(_AddRecitationScreenState._kChooseHadith,
+                style: const TextStyle(
+                    fontFamily: 'Cairo',
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: TaqwaColors.domeBlue)),
+            const SizedBox(height: 12),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: TextField(
+                textDirection: TextDirection.rtl,
+                onChanged: (v) => setState(() => _query = v.trim()),
+                style: const TextStyle(fontFamily: 'Cairo'),
+                decoration: InputDecoration(
+                  hintText: _AddRecitationScreenState._kSearchHint,
+                  hintStyle: const TextStyle(fontFamily: 'Cairo'),
+                  prefixIcon: const Icon(Icons.search),
+                  filled: true,
+                  fillColor: Colors.grey.shade50,
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: Colors.grey.shade200)),
+                  enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: Colors.grey.shade200)),
+                  focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide:
+                          const BorderSide(color: TaqwaColors.domeBlue)),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: ListView.builder(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                itemCount: filtered.length,
+                itemBuilder: (_, i) {
+                  final r = filtered[i];
+                  final selected = r.hadithNumber == widget.currentHadith;
+                  return ListTile(
+                    onTap: () => Navigator.pop(context, r.hadithNumber),
+                    leading: CircleAvatar(
+                      backgroundColor: selected
+                          ? TaqwaColors.domeBlue
+                          : TaqwaColors.domeBlue.withValues(alpha: 0.1),
+                      child: Text('${r.hadithNumber}',
+                          style: TextStyle(
+                              fontFamily: 'Cairo',
+                              fontWeight: FontWeight.bold,
+                              color: selected
+                                  ? Colors.white
+                                  : TaqwaColors.domeBlue)),
+                    ),
+                    title: Text(
+                        '${_AddRecitationScreenState._kHadithWord} ${r.hadithNumber}',
+                        style: const TextStyle(
+                            fontFamily: 'Cairo',
+                            fontWeight: FontWeight.bold)),
+                    subtitle: (r.title != null && r.title!.isNotEmpty)
+                        ? Text(r.title!,
+                            style: TextStyle(
+                                fontFamily: 'Cairo',
+                                color: Colors.grey.shade600))
+                        : null,
+                    trailing: PointsDisplay(
+                      value: r.basePoints,
+                      size: PointsDisplaySize.small,
+                      showLabel: true,
+                    ),
                   );
                 },
               ),

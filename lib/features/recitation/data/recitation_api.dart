@@ -31,6 +31,72 @@ class StudentRecitationsEnvelope {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────
+// Defensive numeric coercion. Backend numbers can arrive as `num`
+// (JSON number) or `String` — Prisma `Decimal` fields (e.g. points_log
+// `amount`) serialize as strings. Never raw-cast these.
+// ─────────────────────────────────────────────────────────────────
+num _toNum(dynamic v) {
+  if (v is num) return v;
+  if (v is String) return num.tryParse(v) ?? 0;
+  return 0;
+}
+
+int _toInt(dynamic v) {
+  if (v is int) return v;
+  if (v is num) return v.toInt();
+  if (v is String) return int.tryParse(v) ?? (num.tryParse(v)?.toInt() ?? 0);
+  return 0;
+}
+
+/// One row of `GET /recitations/hadith/rules` — a Nawawi-40 hadith and the
+/// base points it awards. Mirrors backend `HadithPointsRule`.
+class HadithRule {
+  final int hadithNumber;
+  final int basePoints;
+  final String? title;
+
+  const HadithRule({
+    required this.hadithNumber,
+    required this.basePoints,
+    this.title,
+  });
+
+  factory HadithRule.fromJson(Map<String, dynamic> json) {
+    return HadithRule(
+      hadithNumber: _toInt(json['hadithNumber']),
+      basePoints: _toInt(json['basePoints']),
+      title: json['title'] as String?,
+    );
+  }
+}
+
+/// Result of `POST /recitations/hadith`. [data] is the inserted
+/// `hadith_recitations` row; [pointsAwarded] is the snapshotted base points
+/// (parsed defensively — may arrive as String or num).
+class HadithRecitationResult {
+  final Map<String, dynamic> data;
+  final num pointsAwarded;
+  final String? message;
+
+  const HadithRecitationResult({
+    required this.data,
+    required this.pointsAwarded,
+    this.message,
+  });
+
+  factory HadithRecitationResult.fromJson(Map<String, dynamic> json) {
+    final rawData = json['data'];
+    return HadithRecitationResult(
+      data: rawData == null
+          ? const {}
+          : Map<String, dynamic>.from(rawData as Map),
+      pointsAwarded: _toNum(json['pointsAwarded']),
+      message: json['message'] as String?,
+    );
+  }
+}
+
 class RecitationApi {
   final ApiClient _client;
   RecitationApi(this._client);
@@ -184,5 +250,32 @@ class RecitationApi {
     final response =
         await _client.get('/recitations/student/$studentId/homework');
     return response.data;
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Nawawi 40 Hadith — record one recitation
+  // ─────────────────────────────────────────────────────────────
+  Future<HadithRecitationResult> recordHadithRecitation({
+    required String studentId,
+    required int hadithNumber,
+  }) async {
+    final response = await _client.post('/recitations/hadith', data: {
+      'studentId': studentId,
+      'hadithNumber': hadithNumber,
+    });
+    return HadithRecitationResult.fromJson(
+      Map<String, dynamic>.from(response.data as Map),
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Nawawi 40 Hadith — the 42 point rules, ordered by hadith number
+  // ─────────────────────────────────────────────────────────────
+  Future<List<HadithRule>> getHadithRules() async {
+    final response = await _client.get('/recitations/hadith/rules');
+    final data = (response.data['data'] as List?) ?? const [];
+    return data
+        .map((e) => HadithRule.fromJson(Map<String, dynamic>.from(e as Map)))
+        .toList(growable: false);
   }
 }
