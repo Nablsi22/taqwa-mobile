@@ -53,6 +53,10 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen>
   Map<String, int> _attendance = {'present': 0, 'late': 0, 'absent': 0};
   Map<int, double> _suraProgressMap = {};
 
+  // ── Nawawi-40 memorization map (cumulative across terms). Additive:
+  //    loaded alongside dashboard data; failure is non-fatal. ──
+  HadithProgress _hadithProgress = const HadithProgress.empty();
+
   late AnimationController _pulseController;
   final ScrollController _giftsScrollController = ScrollController();
   int _currentGiftIndex = 0;
@@ -110,7 +114,7 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen>
       await Future.wait([
         _loadPoints(), _loadProgress(), _loadHomework(),
         _loadAnnouncements(), _loadGifts(), _loadRecitationHistory(),
-        _loadLeaderboard(), _loadAttendance(),
+        _loadLeaderboard(), _loadAttendance(), _loadHadithProgress(),
       ]);
       _buildSuraProgressMap();
       if ((_suraProgressMap.isEmpty || _totalPagesMemorized == 0) && _recitationHistory.isNotEmpty) {
@@ -179,6 +183,15 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen>
 
   Future<void> _loadRecitationHistory() async {
     try { _recitationHistory = await _recitationApi.getStudentHistory(_studentId!); } catch (_) {}
+  }
+
+  Future<void> _loadHadithProgress() async {
+    try {
+      _hadithProgress =
+          await _recitationApi.getStudentHadithProgress(_studentId!);
+    } catch (_) {
+      _hadithProgress = const HadithProgress.empty();
+    }
   }
 
   Future<void> _loadLeaderboard() async {
@@ -302,6 +315,7 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen>
                         _buildQuickActions(),
                         _buildAttendanceSummary(),
                         _buildQuranMapCard(),
+                        _buildHadithMapCard(),
                         if (_gifts.isNotEmpty) _buildGiftsSlider(),
                         _buildLeaderboardPreview(),
                         if (_recitationHistory.isNotEmpty) _buildRecitationSection(),
@@ -642,7 +656,179 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen>
       Text(label, style: TextStyle(fontFamily: 'Cairo', fontSize: 10, color: Colors.grey.shade600)),
     ]);
   }
+// ═══════════════════════════════════════════════════════
+  // NAWAWI-40 MAP — compact card + bottom sheet (student view)
+  //
+  // Additive: mirrors _buildQuranMapCard's look. Cumulative across terms
+  // (backed by getStudentHadithProgress). Read-only for the student.
+  // ═══════════════════════════════════════════════════════
 
+  Widget _buildHadithMapCard() {
+    final count = _hadithProgress.count;
+    final total = _hadithProgress.total > 0 ? _hadithProgress.total : 42;
+    final remaining = total - count;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+      child: Material(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: _showHadithMapSheet,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                      colors: [TaqwaColors.islamicGreen, Color(0xFF27AE60)]),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Icon(Icons.auto_stories_rounded,
+                    color: Colors.white, size: 24),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('\u0627\u0644\u0623\u0631\u0628\u0639\u064a\u0646 \u0627\u0644\u0646\u0648\u0648\u064a\u0629',
+                        style: TextStyle(
+                            fontFamily: 'Cairo',
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                            color: TaqwaColors.domeBlue)),
+                    const SizedBox(height: 2),
+                    Wrap(spacing: 8, runSpacing: 4, children: [
+                      _mapMiniStat('\u2705', '$count \u0645\u062d\u0641\u0648\u0638'),
+                      _mapMiniStat('\u25ab', '$remaining \u0645\u062a\u0628\u0642\u064a'),
+                    ]),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_left, color: Colors.grey.shade400, size: 24),
+            ]),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showHadithMapSheet() {
+    final total = _hadithProgress.total > 0 ? _hadithProgress.total : 42;
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        height: MediaQuery.of(ctx).size.height * 0.85,
+        decoration: const BoxDecoration(
+            color: Color(0xFFF5F6FA),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+        child: Directionality(
+          textDirection: TextDirection.rtl,
+          child: Column(children: [
+            Container(
+                margin: const EdgeInsets.only(top: 12),
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(2))),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(children: [
+                const Icon(Icons.auto_stories_rounded,
+                    color: TaqwaColors.domeBlue, size: 22),
+                const SizedBox(width: 8),
+                const Text('\u0627\u0644\u0623\u0631\u0628\u0639\u064a\u0646 \u0627\u0644\u0646\u0648\u0648\u064a\u0629',
+                    style: TextStyle(
+                        fontFamily: 'Cairo',
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: TaqwaColors.domeBlue)),
+                const Spacer(),
+                Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                        color:
+                            TaqwaColors.islamicGreen.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(6)),
+                    child: Text('${_hadithProgress.count} / $total',
+                        style: const TextStyle(
+                            fontFamily: 'Cairo',
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: TaqwaColors.islamicGreen))),
+              ]),
+            ),
+            // Legend
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(children: [
+                _legendDot(TaqwaColors.islamicGreen, '\u0645\u062d\u0641\u0648\u0638'),
+                const SizedBox(width: 12),
+                _legendDot(Colors.grey.shade200, '\u063a\u064a\u0631 \u0645\u062d\u0641\u0648\u0638'),
+              ]),
+            ),
+            const SizedBox(height: 12),
+            // 42-hadith grid
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Wrap(
+                  spacing: 5,
+                  runSpacing: 5,
+                  children: List.generate(total, (index) {
+                    final n = index + 1;
+                    final memorized = _hadithProgress.isMemorized(n);
+                    return Container(
+                      width: 62,
+                      padding: const EdgeInsets.symmetric(
+                          vertical: 10, horizontal: 4),
+                      decoration: BoxDecoration(
+                        color: memorized
+                            ? TaqwaColors.islamicGreen
+                            : Colors.grey.shade100,
+                        borderRadius: BorderRadius.circular(10),
+                        border: memorized
+                            ? null
+                            : Border.all(color: Colors.grey.shade200),
+                      ),
+                      child: Column(mainAxisSize: MainAxisSize.min, children: [
+                        Text('$n',
+                            style: TextStyle(
+                                fontFamily: 'Cairo',
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                                color: memorized
+                                    ? Colors.white
+                                    : Colors.grey.shade500)),
+                        const SizedBox(height: 2),
+                        Icon(
+                            memorized
+                                ? Icons.check_circle
+                                : Icons.circle_outlined,
+                            size: 13,
+                            color: memorized
+                                ? Colors.white
+                                : Colors.grey.shade400),
+                      ]),
+                    );
+                  }),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+          ]),
+        ),
+      ),
+    );
+  }
   // ═══════════════════════════════════════════════════════
   // GIFTS SLIDER
   // ═══════════════════════════════════════════════════════

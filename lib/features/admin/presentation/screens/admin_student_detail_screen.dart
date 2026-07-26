@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../../../core/theme/taqwa_colors.dart';
 import '../../../../core/network/api_client.dart';
+import '../../../../core/extensions/points_formatting.dart';
 
 class AdminStudentDetailScreen extends StatefulWidget {
   final String studentId;
@@ -27,7 +28,14 @@ class _AdminStudentDetailScreenState extends State<AdminStudentDetailScreen>
   List<Map<String, dynamic>> _recitations = [];
   List<Map<String, dynamic>> _attendance = [];
   Map<String, dynamic> _attendanceSummary = {};
-  int _totalPoints = 0;
+
+  /// Points are stored as `Decimal(7,3)` on the backend and may arrive as
+  /// int, double, or String. Held as `num` so this layer never performs an
+  /// implicit narrowing downcast on a value it does not control. Declaring
+  /// this as `int` was the root cause of the blank points tab: assigning a
+  /// fractional JSON number to it threw a runtime type error.
+  num _totalPoints = 0;
+
   int _memorizedPages = 0;
   bool _isLoading = true;
 
@@ -81,18 +89,39 @@ class _AdminStudentDetailScreenState extends State<AdminStudentDetailScreen>
     }
   }
 
+  /// Safely coerces any JSON-parsed numeric value (int, double, String)
+  /// into a [num]. Mirrors the helpers already present in `StudentModel`
+  /// and the student dashboard: every numeric value read from an API
+  /// response passes through here, never straight into a typed field.
+  num _toNum(dynamic v) {
+    if (v == null) return 0;
+    if (v is num) return v;
+    return num.tryParse(v.toString()) ?? 0;
+  }
+
   Future<void> _loadPointsLog() async {
     try {
       final res = await ApiClient.instance
-          .get('/points/student/${widget.studentId}');
+          .get('/points/student/${widget.studentId}?limit=500');
       final data = res.data;
-      if (data is Map) {
-        _totalPoints = data['totalPoints'] ?? 0;
-        final list = data['data'] as List? ?? [];
-        _pointsLog = list.map((e) => Map<String, dynamic>.from(e)).toList();
+      if (data is! Map) return;
+
+      // ORDER IS LOAD-BEARING. The log list is assigned before the header
+      // total. The previous version read the total first, and a runtime
+      // type error on that single scalar aborted the method before the
+      // list was ever assigned, blanking the entire tab. Display state
+      // must degrade field by field, never all at once.
+      final rawList = data['data'];
+      if (rawList is List) {
+        _pointsLog = rawList
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
       }
-    } catch (e) {
-      debugPrint('Points error: $e');
+
+      _totalPoints = _toNum(data['totalPoints']);
+    } catch (e, stackTrace) {
+      debugPrint('Points error: $e\n$stackTrace');
     }
   }
 
@@ -513,7 +542,10 @@ class _AdminStudentDetailScreenState extends State<AdminStudentDetailScreen>
               const SizedBox(height: 16),
               Row(
                 children: [
-                  _buildHeaderStat('النقاط', '$_totalPoints',
+                  // `.asPoints` formats to 2 decimal places. Required now
+                  // that `_totalPoints` is a `num`: raw interpolation of a
+                  // Decimal(7,3) value would render as e.g. "196.561".
+                  _buildHeaderStat('النقاط', _totalPoints.asPoints,
                       Icons.star_rounded, TaqwaColors.minaretGold),
                   const SizedBox(width: 6),
                   _buildHeaderStat(
@@ -687,7 +719,10 @@ class _AdminStudentDetailScreenState extends State<AdminStudentDetailScreen>
             itemBuilder: (context, index) {
               final entry = _pointsLog[index];
               final entryId = entry['id']?.toString() ?? '';
-              final amount = entry['amount'] ?? 0;
+
+              // Coerced defensively: `amount` is a Decimal(7,3) column and
+              // the comparison below must never run against a String.
+              final amount = _toNum(entry['amount']);
               final isPositive = amount > 0;
 
               // ─── New backend fields ───
@@ -787,7 +822,7 @@ class _AdminStudentDetailScreenState extends State<AdminStudentDetailScreen>
                                 child: Padding(
                                   padding: const EdgeInsets.all(4),
                                   child: Text(
-                                    '${isPositive ? '+' : ''}$amount',
+                                    '${isPositive ? '+' : ''}${amount.asPoints}',
                                     style: TextStyle(
                                       fontFamily: 'Cairo',
                                       fontSize: 16,

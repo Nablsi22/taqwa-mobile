@@ -44,10 +44,17 @@ class _InstructorStudentDetailScreenState
   int _studentRank = 0;
   int _totalStudentsCount = 0;
 
+  // ── Nawawi-40 memorization map (cumulative across terms). Additive:
+  //    loaded alongside the existing data; failure is non-fatal (empty
+  //    map → the tab renders all 42 as "not memorized"). ──
+  HadithProgress _hadithProgress = const HadithProgress.empty();
+  List<HadithRule> _hadithRules = const [];
+
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this);
+    // 5 tabs now: معلومات / التسميع / النقاط / الحفظ / الأربعين
+    _tabController = TabController(length: 5, vsync: this);
     _loadData();
   }
 
@@ -71,6 +78,7 @@ class _InstructorStudentDetailScreenState
         _loadProgress(),
         _loadHomework(),
         _loadRank(),
+        _loadHadith(),
       ]);
       setState(() => _isLoading = false);
     } catch (e) {
@@ -114,6 +122,24 @@ class _InstructorStudentDetailScreenState
 
   Future<void> _loadHomework() async {
     _homework = await _recitationApi.getStudentHomework(widget.studentId);
+  }
+
+  // ── Nawawi-40: rules (42 titles/points) + this student's map. Both
+  //    failures are swallowed so the rest of the screen still loads. ──
+  Future<void> _loadHadith() async {
+    try {
+      final results = await Future.wait([
+        _recitationApi.getHadithRules(),
+        _recitationApi
+            .getStudentHadithProgress(widget.studentId)
+            .catchError((Object _) => const HadithProgress.empty()),
+      ]);
+      _hadithRules = results[0] as List<HadithRule>;
+      _hadithProgress = results[1] as HadithProgress;
+    } catch (_) {
+      _hadithRules = const [];
+      _hadithProgress = const HadithProgress.empty();
+    }
   }
 
   Future<void> _loadRank() async {
@@ -256,6 +282,7 @@ class _InstructorStudentDetailScreenState
                         delegate: _TabBarDelegate(
                           TabBar(
                             controller: _tabController,
+                            isScrollable: true,
                             labelColor: TaqwaColors.domeBlue,
                             unselectedLabelColor: Colors.grey.shade400,
                             indicatorColor: TaqwaColors.domeBlue,
@@ -273,6 +300,7 @@ class _InstructorStudentDetailScreenState
                               Tab(text: 'التسميع'),
                               Tab(text: 'النقاط'),
                               Tab(text: 'الحفظ'),
+                              Tab(text: 'الأربعين'),
                             ],
                           ),
                         ),
@@ -285,6 +313,7 @@ class _InstructorStudentDetailScreenState
                         _buildRecitationTab(),
                         _buildPointsTab(),
                         _buildProgressTab(),
+                        _buildHadithTab(),
                       ],
                     ),
                   ),
@@ -292,6 +321,10 @@ class _InstructorStudentDetailScreenState
           animation: _tabController,
           builder: (context, _) {
             final isPointsTab = _tabController.index == 2;
+            final isHadithTab = _tabController.index == 4;
+
+            // No FAB on the Nawawi map — it's a read-only overview.
+            if (isHadithTab) return const SizedBox.shrink();
 
             if (isPointsTab) {
               return FloatingActionButton.extended(
@@ -560,6 +593,201 @@ class _InstructorStudentDetailScreenState
             maxLines: 2,
             overflow: TextOverflow.ellipsis),
       ),
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  // Nawawi-40 memorization map — read-only grid of the 42 ahadith.
+  // Memorized entries (cumulative across terms) show islamicGreen with a
+  // check; the rest are muted. Header shows «محفوظ N من 42».
+  // ─────────────────────────────────────────────────────────────────
+  Widget _buildHadithTab() {
+    // Ordered 1..42 regardless of whether rules loaded (fallback to plain
+    // numbers so the grid always renders the full set).
+    final int total =
+        _hadithProgress.total > 0 ? _hadithProgress.total : 42;
+
+    String? titleFor(int n) {
+      for (final r in _hadithRules) {
+        if (r.hadithNumber == n) return r.title;
+      }
+      return null;
+    }
+
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        // Summary header
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                TaqwaColors.islamicGreen.withValues(alpha: 0.12),
+                TaqwaColors.islamicGreen.withValues(alpha: 0.04),
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+                color: TaqwaColors.islamicGreen.withValues(alpha: 0.25)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                    color: TaqwaColors.islamicGreen,
+                    borderRadius: BorderRadius.circular(12)),
+                child: const Icon(Icons.auto_stories_rounded,
+                    color: Colors.white, size: 22),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('خريطة الأربعين النووية',
+                        style: TextStyle(
+                            fontFamily: 'Cairo',
+                            fontSize: 13,
+                            color: Colors.grey.shade700)),
+                    const SizedBox(height: 4),
+                    Text('محفوظ ${_hadithProgress.count} من $total',
+                        style: const TextStyle(
+                            fontFamily: 'Cairo',
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                            color: TaqwaColors.islamicGreen)),
+                  ],
+                ),
+              ),
+              SizedBox(
+                width: 54,
+                height: 54,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    SizedBox(
+                      width: 54,
+                      height: 54,
+                      child: CircularProgressIndicator(
+                        value: total == 0
+                            ? 0
+                            : _hadithProgress.count / total,
+                        strokeWidth: 5,
+                        backgroundColor:
+                            TaqwaColors.islamicGreen.withValues(alpha: 0.15),
+                        valueColor: const AlwaysStoppedAnimation(
+                            TaqwaColors.islamicGreen),
+                      ),
+                    ),
+                    Text(
+                      total == 0
+                          ? '0%'
+                          : '${((_hadithProgress.count / total) * 100).round()}%',
+                      style: const TextStyle(
+                          fontFamily: 'Cairo',
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: TaqwaColors.islamicGreen),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        // 42-hadith grid
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: List.generate(total, (i) {
+            final n = i + 1;
+            final memorized = _hadithProgress.isMemorized(n);
+            final title = titleFor(n);
+            return Container(
+              width: 80,
+              padding:
+                  const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+              decoration: BoxDecoration(
+                color: memorized
+                    ? TaqwaColors.islamicGreen
+                    : Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(12),
+                border: memorized
+                    ? null
+                    : Border.all(color: Colors.grey.shade200),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('$n',
+                      style: TextStyle(
+                          fontFamily: 'Cairo',
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: memorized
+                              ? Colors.white
+                              : Colors.grey.shade500)),
+                  const SizedBox(height: 2),
+                  if (memorized)
+                    const Icon(Icons.check_circle,
+                        size: 14, color: Colors.white)
+                  else
+                    Icon(Icons.circle_outlined,
+                        size: 14, color: Colors.grey.shade400),
+                  if (title != null && title.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(title,
+                        style: TextStyle(
+                            fontFamily: 'Cairo',
+                            fontSize: 8.5,
+                            color: memorized
+                                ? Colors.white70
+                                : Colors.grey.shade500),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis),
+                  ],
+                ],
+              ),
+            );
+          }),
+        ),
+        const SizedBox(height: 16),
+
+        // Legend
+        Row(
+          children: [
+            _hadithLegendDot(TaqwaColors.islamicGreen, 'محفوظ'),
+            const SizedBox(width: 16),
+            _hadithLegendDot(Colors.grey.shade200, 'غير محفوظ'),
+          ],
+        ),
+        const SizedBox(height: 24),
+      ],
+    );
+  }
+
+  Widget _hadithLegendDot(Color color, String label) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+            width: 14,
+            height: 14,
+            decoration: BoxDecoration(
+                color: color, borderRadius: BorderRadius.circular(4))),
+        const SizedBox(width: 6),
+        Text(label,
+            style: TextStyle(
+                fontFamily: 'Cairo',
+                fontSize: 12,
+                color: Colors.grey.shade600)),
+      ],
     );
   }
 

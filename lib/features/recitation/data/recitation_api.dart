@@ -97,6 +97,46 @@ class HadithRecitationResult {
   }
 }
 
+/// Nawawi-40 memorization map for one student, from
+/// `GET /recitations/student/:id/hadith-progress`.
+///
+/// CUMULATIVE across terms — a hadith recorded in any term counts as
+/// memorized forever (mirrors the backend's UNIQUE(student_id,
+/// hadith_number) constraint, which is not term-scoped).
+class HadithProgress {
+  /// Hadith numbers (1–42) already recorded for this student, ascending.
+  final Set<int> memorized;
+
+  /// Convenience counters — [count] == memorized.length, [total] == 42.
+  final int count;
+  final int total;
+
+  const HadithProgress({
+    required this.memorized,
+    required this.count,
+    required this.total,
+  });
+
+  /// Empty progress — safe fallback when the fetch fails so the picker
+  /// can still open (with no checkmarks) instead of blocking recording.
+  const HadithProgress.empty()
+      : memorized = const <int>{},
+        count = 0,
+        total = 42;
+
+  bool isMemorized(int hadithNumber) => memorized.contains(hadithNumber);
+
+  factory HadithProgress.fromJson(Map<String, dynamic> json) {
+    final rawList = (json['memorized'] as List?) ?? const [];
+    final memorized = rawList.map(_toInt).toSet();
+    return HadithProgress(
+      memorized: memorized,
+      count: _toInt(json['count'] ?? memorized.length),
+      total: _toInt(json['total'] ?? 42),
+    );
+  }
+}
+
 class RecitationApi {
   final ApiClient _client;
   RecitationApi(this._client);
@@ -266,6 +306,18 @@ class RecitationApi {
     return HadithRecitationResult.fromJson(
       Map<String, dynamic>.from(response.data as Map),
     );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Nawawi 40 Hadith — memorization map (cumulative across terms)
+  // ─────────────────────────────────────────────────────────────
+  Future<HadithProgress> getStudentHadithProgress(String studentId) async {
+    final response =
+        await _client.get('/recitations/student/$studentId/hadith-progress');
+    final raw = Map<String, dynamic>.from(response.data as Map);
+    final data = raw['data'];
+    if (data == null) return const HadithProgress.empty();
+    return HadithProgress.fromJson(Map<String, dynamic>.from(data as Map));
   }
 
   // ─────────────────────────────────────────────────────────────
