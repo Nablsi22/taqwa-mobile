@@ -62,3 +62,4 @@ ios/Runner/firebase_app_id_file.json
 /test_e.png
 /test_f.jpg
 /test_maven.xml
+*.bak
