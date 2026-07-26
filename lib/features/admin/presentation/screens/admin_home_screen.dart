@@ -40,20 +40,49 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
     _loadDashboardStats();
   }
 
+  /// Extracts the roll size from a paginated API envelope.
+  ///
+  /// `/students` returns at most 50 rows per request by default, so counting
+  /// the returned list reports 50 no matter how many students exist. The
+  /// server already sends the true unpaginated figure in `meta.total`; this
+  /// reads that, and only falls back to the page length for endpoints that
+  /// return a bare list with no envelope.
+  int _countFrom(dynamic body, List<dynamic> page) {
+    if (body is Map) {
+      final meta = body['meta'];
+      if (meta is Map) {
+        final total = meta['total'];
+        if (total is num) return total.toInt();
+        if (total is String) {
+          final parsed = int.tryParse(total);
+          if (parsed != null) return parsed;
+        }
+      }
+    }
+    return page.length;
+  }
+
+  /// Pulls the row list out of either an enveloped (`{ data: [...] }`) or a
+  /// bare-list response without assuming which shape arrived.
+  List<dynamic> _listFrom(dynamic body) {
+    if (body is Map) return body['data'] as List? ?? const [];
+    if (body is List) return body;
+    return const [];
+  }
+
   Future<void> _loadDashboardStats() async {
     setState(() => _isLoading = true);
     try {
       // ── Student & Instructor counts ──
       final studentsRes = await ApiClient.instance.get('/students');
-      final studentsList =
-          studentsRes.data['data'] as List? ?? studentsRes.data as List? ?? [];
-      _totalStudents = studentsList.length;
+      final studentsBody = studentsRes.data;
+      final studentsList = _listFrom(studentsBody);
+      _totalStudents = _countFrom(studentsBody, studentsList);
 
       final instructorsRes = await ApiClient.instance.get('/instructors');
-      final instructorsList = instructorsRes.data['data'] as List? ??
-          instructorsRes.data as List? ??
-          [];
-      _totalInstructors = instructorsList.length;
+      final instructorsBody = instructorsRes.data;
+      final instructorsList = _listFrom(instructorsBody);
+      _totalInstructors = _countFrom(instructorsBody, instructorsList);
 
       final today = DateTime.now().toIso8601String().split('T')[0];
 
@@ -140,7 +169,7 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
                                 //     fontSize: 13,
                                 //     color: Colors.white.withOpacity(0.8),
                                 //   ),
-                                
+
                                 // ),
                                 const Text(
                                   'لوحة تحكم المشرف',
