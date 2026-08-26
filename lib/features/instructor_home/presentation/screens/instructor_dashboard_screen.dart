@@ -33,6 +33,12 @@ class _InstructorDashboardScreenState extends State<InstructorDashboardScreen> {
   String? _instructorId;
   List<Map<String, dynamic>> _students = [];
 
+  // Circle rank per studentId, computed from the points balance once per
+  // load and then held constant, so changing the sort never renumbers
+  // anybody.
+  final Map<String, int> _circleRank = {};
+  _RosterSort _sort = _RosterSort.points;
+
   @override
   void initState() {
     super.initState();
@@ -58,6 +64,8 @@ class _InstructorDashboardScreenState extends State<InstructorDashboardScreen> {
       final overview = await _recitationApi.getInstructorOverview();
       setState(() {
         _students = overview;
+        _recomputeCircleRanks();
+        _applySort();
         _isLoading = false;
       });
     } catch (e) {
@@ -66,6 +74,83 @@ class _InstructorDashboardScreenState extends State<InstructorDashboardScreen> {
         _isLoading = false;
       });
     }
+  }
+
+  // Defensive readers: an older backend that predates these fields
+  // yields a neutral value instead of throwing.
+  double _balanceOf(Map<String, dynamic> s) =>
+      (s['pointsBalance'] as num?)?.toDouble() ?? 0;
+
+  int? _mosqueRankOf(Map<String, dynamic> s) =>
+      (s['mosqueRank'] as num?)?.toInt();
+
+  double _percentOf(Map<String, dynamic> s) =>
+      (s['overallPercentage'] as num?)?.toDouble() ?? 0;
+
+  DateTime? _lastAttendanceOf(Map<String, dynamic> s) {
+    final raw = s['lastAttendanceDate'];
+    if (raw == null) return null;
+    return DateTime.tryParse(raw.toString());
+  }
+
+  // Standard competition ranking (1, 2, 2, 4): equal balances share a
+  // position, matching the mosque rank the server computes.
+  void _recomputeCircleRanks() {
+    _circleRank.clear();
+    final ordered = [..._students]
+      ..sort((a, b) => _balanceOf(b).compareTo(_balanceOf(a)));
+
+    double? previous;
+    int current = 0;
+    for (var i = 0; i < ordered.length; i++) {
+      final balance = _balanceOf(ordered[i]);
+      if (previous == null || balance != previous) {
+        current = i + 1;
+        previous = balance;
+      }
+      final id = ordered[i]['studentId'] as String?;
+      if (id != null) _circleRank[id] = current;
+    }
+  }
+
+  void _applySort() {
+    switch (_sort) {
+      case _RosterSort.points:
+        _students.sort((a, b) => _balanceOf(b).compareTo(_balanceOf(a)));
+        break;
+      case _RosterSort.name:
+        _students.sort((a, b) =>
+            (a['fullName'] as String? ?? '')
+                .compareTo(b['fullName'] as String? ?? ''));
+        break;
+      case _RosterSort.memorisation:
+        _students.sort((a, b) => _percentOf(b).compareTo(_percentOf(a)));
+        break;
+      case _RosterSort.attendance:
+        // Oldest first: the instructor is looking for who stopped
+        // coming. Students with no attendance at all lead the list.
+        _students.sort((a, b) {
+          final x = _lastAttendanceOf(a);
+          final y = _lastAttendanceOf(b);
+          if (x == null && y == null) return 0;
+          if (x == null) return -1;
+          if (y == null) return 1;
+          return x.compareTo(y);
+        });
+        break;
+    }
+  }
+
+  String _attendanceLabel(Map<String, dynamic> s) {
+    final date = _lastAttendanceOf(s);
+    if (date == null) return 'لا حضور';
+    final now = DateTime.now();
+    final days = DateTime(now.year, now.month, now.day)
+        .difference(DateTime(date.year, date.month, date.day))
+        .inDays;
+    if (days <= 0) return 'اليوم';
+    if (days == 1) return 'أمس';
+    return 'منذ ' + days.toString() + ' يوم';
   }
 
   void _navigateToStudentDetail(Map<String, dynamic> student) {
@@ -354,6 +439,7 @@ class _InstructorDashboardScreenState extends State<InstructorDashboardScreen> {
                             ),
                           ),
                         ),
+                        SliverToBoxAdapter(child: _buildSortBar()),
                         _students.isEmpty
                             ? const SliverFillRemaining(
                                 child: Center(
@@ -377,6 +463,77 @@ class _InstructorDashboardScreenState extends State<InstructorDashboardScreen> {
                       ],
                     ),
                   ),
+      ),
+    );
+  }
+
+  Widget _buildSortBar() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+      child: Row(
+        children: [
+          Icon(Icons.sort, size: 15, color: Colors.grey.shade500),
+          const SizedBox(width: 6),
+          Text(
+            'فرز حسب',
+            style: TextStyle(
+              fontFamily: 'Cairo',
+              fontSize: 11,
+              color: Colors.grey.shade500,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  _sortChip(_RosterSort.points, 'النقاط'),
+                  _sortChip(_RosterSort.name, 'الاسم'),
+                  _sortChip(_RosterSort.memorisation, 'الحفظ'),
+                  _sortChip(_RosterSort.attendance, 'آخر حضور'),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _sortChip(_RosterSort value, String label) {
+    final selected = _sort == value;
+    return Padding(
+      padding: const EdgeInsets.only(left: 6),
+      child: Material(
+        color: selected
+            ? TaqwaColors.domeBlue
+            : TaqwaColors.domeBlue.withValues(alpha: 0.07),
+        borderRadius: BorderRadius.circular(20),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(20),
+          onTap: () {
+            if (selected) return;
+            setState(() {
+              _sort = value;
+              _applySort();
+            });
+          },
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+                horizontal: 13, vertical: 7),
+            child: Text(
+              label,
+              style: TextStyle(
+                fontFamily: 'Cairo',
+                fontSize: 11.5,
+                fontWeight:
+                    selected ? FontWeight.bold : FontWeight.normal,
+                color: selected ? Colors.white : TaqwaColors.domeBlue,
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -460,6 +617,11 @@ class _InstructorDashboardScreenState extends State<InstructorDashboardScreen> {
 
   Widget _buildStudentCard(Map<String, dynamic> student, int index) {
     final name = student['fullName'] ?? 'طالب';
+    final studentId = student['studentId'] as String? ?? '';
+    final rank = _circleRank[studentId] ?? (index + 1);
+    final mosqueRank = _mosqueRankOf(student);
+    final balance = _balanceOf(student);
+    final attendanceLabel = _attendanceLabel(student);
     final totalPages = student['totalPagesMemorized'] ?? 0;
     final pct = student['overallPercentage'] ?? 0;
     final lastRating = student['lastRating'] ?? '';
@@ -505,19 +667,19 @@ class _InstructorDashboardScreenState extends State<InstructorDashboardScreen> {
                   width: 34,
                   height: 34,
                   decoration: BoxDecoration(
-                    color: index < 3
-                        ? TaqwaColors.minaretGold.withOpacity(0.12)
+                    color: rank <= 3
+                        ? TaqwaColors.minaretGold.withValues(alpha: 0.12)
                         : Colors.grey.shade100,
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Center(
                     child: Text(
-                      '${index + 1}',
+                      '$rank',
                       style: TextStyle(
                         fontFamily: 'Cairo',
                         fontSize: 14,
                         fontWeight: FontWeight.bold,
-                        color: index < 3
+                        color: rank <= 3
                             ? TaqwaColors.minaretGold
                             : Colors.grey.shade600,
                       ),
@@ -551,7 +713,62 @@ class _InstructorDashboardScreenState extends State<InstructorDashboardScreen> {
                         overflow: TextOverflow.ellipsis,
                       ),
                       const SizedBox(height: 2),
-                      // D2 compact line — gray-muted when no prior recitation
+                      const SizedBox(height: 3),
+                      Row(
+                        children: [
+                          Icon(Icons.star_rounded,
+                              size: 12, color: TaqwaColors.minaretGold),
+                          const SizedBox(width: 3),
+                          Text(
+                            balance.toStringAsFixed(2) + ' نقطة',
+                            textDirection: TextDirection.ltr,
+                            style: const TextStyle(
+                              fontFamily: 'Cairo',
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: TaqwaColors.domeBlue,
+                            ),
+                          ),
+                          if (mosqueRank != null) ...[
+                            const SizedBox(width: 8),
+                            Container(
+                              width: 1,
+                              height: 10,
+                              color: Colors.grey.shade300,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              '#' + mosqueRank.toString() + ' في الجامع',
+                              style: TextStyle(
+                                fontFamily: 'Cairo',
+                                fontSize: 11,
+                                color: Colors.grey.shade600,
+                              ),
+                            ),
+                          ],
+                          const SizedBox(width: 8),
+                          Container(
+                            width: 1,
+                            height: 10,
+                            color: Colors.grey.shade300,
+                          ),
+                          const SizedBox(width: 8),
+                          Flexible(
+                            child: Text(
+                              attendanceLabel,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontFamily: 'Cairo',
+                                fontSize: 11,
+                                color: Colors.grey.shade500,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 2),
+                      // D2 compact line - gray-muted when no prior recitation
                       Text(
                         lastRecitationLine,
                         style: TextStyle(
@@ -623,3 +840,5 @@ class _InstructorDashboardScreenState extends State<InstructorDashboardScreen> {
     );
   }
 }
+
+enum _RosterSort { points, name, memorisation, attendance }

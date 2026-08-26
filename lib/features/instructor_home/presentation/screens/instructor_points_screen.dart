@@ -294,7 +294,16 @@ class _InstructorPointsScreenState extends State<InstructorPointsScreen> {
                     Expanded(
                       child: ListView(
                         controller: scrollController,
-                        padding: const EdgeInsets.all(16),
+                        // Keyboard-aware bottom inset. Extends the scroll
+                        // extent by the keyboard height so the custom-points
+                        // fields can rise above it; collapses to zero when
+                        // the keyboard is dismissed.
+                        padding: EdgeInsets.fromLTRB(
+                          16,
+                          16,
+                          16,
+                          16 + MediaQuery.of(ctx).viewInsets.bottom,
+                        ),
                         children: [
                           // === EARN RULES ===
                           if (earnRules.isNotEmpty) ...[

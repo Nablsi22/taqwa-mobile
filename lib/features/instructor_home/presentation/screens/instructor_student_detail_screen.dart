@@ -38,6 +38,7 @@ class _InstructorStudentDetailScreenState
   List<Map<String, dynamic>> _pointsLog = [];
   List<Map<String, dynamic>> _recitationHistory = [];
   Map<String, dynamic>? _lastRecitation; // D2
+  List<Map<String, dynamic>> _hadithEntries = [];
   Map<String, dynamic> _progress = {};
   Map<String, dynamic> _homework = {};
   double _totalPoints = 0;
@@ -114,6 +115,7 @@ class _InstructorStudentDetailScreenState
         await _recitationApi.getStudentHistoryWithSession(widget.studentId);
     _recitationHistory = envelope.history;
     _lastRecitation = envelope.lastRecitation;
+    _hadithEntries = envelope.hadithEntries;
   }
 
   Future<void> _loadProgress() async {
@@ -144,15 +146,12 @@ class _InstructorStudentDetailScreenState
 
   Future<void> _loadRank() async {
     try {
-      final leaderboard = await _pointsApi.getLeaderboard(limit: 100);
-      for (int i = 0; i < leaderboard.length; i++) {
-        if (leaderboard[i]['id'] == widget.studentId ||
-            leaderboard[i]['studentId'] == widget.studentId) {
-          _studentRank = i + 1;
-          break;
-        }
-      }
-      _totalStudentsCount = leaderboard.length;
+      // One request, two integers. The previous implementation pulled
+      // the top 100 and used the list length as the denominator, which
+      // both understated the field and lost anyone ranked below 100th.
+      final rank = await _pointsApi.getStudentRank(widget.studentId);
+      _studentRank = (rank['rank'] as num?)?.toInt() ?? 0;
+      _totalStudentsCount = (rank['total'] as num?)?.toInt() ?? 0;
     } catch (_) {}
   }
 
@@ -1051,185 +1050,384 @@ class _InstructorStudentDetailScreenState
     );
   }
 
+  // Day key in ISO form so string sort equals chronological sort.
+  String _dayKeyOf(dynamic raw) {
+    final d = DateTime.tryParse(raw?.toString() ?? '');
+    if (d == null) return '';
+    final m = d.month.toString().padLeft(2, '0');
+    final day = d.day.toString().padLeft(2, '0');
+    return '${d.year}-$m-$day';
+  }
+
+  String _dayLabel(String key) {
+    final d = DateTime.tryParse(key);
+    if (d == null) return key;
+    final now = DateTime.now();
+    final diff = DateTime(now.year, now.month, now.day)
+        .difference(DateTime(d.year, d.month, d.day))
+        .inDays;
+    if (diff == 0) return 'اليوم';
+    if (diff == 1) return 'أمس';
+    return _formatDate(key);
+  }
+
+  double _pagesOf(Map<String, dynamic> rec) {
+    final raw = rec['pagesCalculated'];
+    if (raw != null) return double.tryParse(raw.toString()) ?? 0;
+    return ((rec['pagesRecited'] as num?) ?? 0).toDouble();
+  }
+
+  double _pointsOf(Map<String, dynamic> e) =>
+      (e['pointsAwarded'] as num?)?.toDouble() ?? 0;
+
+  // Groups both sources by day, then flattens into render rows so the
+  // list stays a single ListView.builder rather than nested scrollables.
+  List<_TimelineRow> _buildTimelineRows() {
+    final byDay = <String, List<_TimelineEntry>>{};
+
+    for (final rec in _recitationHistory) {
+      final key = _dayKeyOf(rec['date'] ?? rec['createdAt']);
+      (byDay[key] ??= []).add(_TimelineEntry(isHadith: false, data: rec));
+    }
+    for (final h in _hadithEntries) {
+      final key = _dayKeyOf(h['createdAt']);
+      (byDay[key] ??= []).add(_TimelineEntry(isHadith: true, data: h));
+    }
+
+    final keys = byDay.keys.toList()..sort((a, b) => b.compareTo(a));
+    final rows = <_TimelineRow>[];
+
+    for (final key in keys) {
+      final entries = byDay[key]!;
+      double pages = 0;
+      double points = 0;
+      String? homework;
+
+      for (final e in entries) {
+        points += _pointsOf(e.data);
+        if (!e.isHadith) {
+          pages += _pagesOf(e.data);
+          final hw = e.data['homework'];
+          if (hw != null && hw.toString().trim().isNotEmpty) {
+            homework = hw.toString();
+          }
+        }
+      }
+
+      rows.add(_TimelineRow.day(key, entries.length, pages, points));
+      for (final e in entries) {
+        rows.add(_TimelineRow.entry(e));
+      }
+      if (homework != null) rows.add(_TimelineRow.homework(homework));
+    }
+    return rows;
+  }
+
   Widget _buildRecitationTab() {
-    if (_recitationHistory.isEmpty && _lastRecitation == null) {
-      return const Center(
+    final rows = _buildTimelineRows();
+
+    if (rows.isEmpty) {
+      return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.menu_book, size: 48, color: Colors.grey),
-            SizedBox(height: 8),
+            Icon(Icons.menu_book, size: 48, color: Colors.grey.shade300),
+            const SizedBox(height: 8),
             Text('لا يوجد تسميع بعد',
-                style: TextStyle(fontFamily: 'Cairo', color: Colors.grey)),
+                style: TextStyle(fontFamily: 'Cairo', color: Colors.grey.shade500)),
           ],
         ),
       );
     }
 
     return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      // +1 leading slot for the "آخر تسميع" panel.
-      itemCount: _recitationHistory.length + 1,
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+      itemCount: rows.length,
       itemBuilder: (context, index) {
-        if (index == 0) {
-          return _buildLastRecitationCard();
-        }
-        final rec = _recitationHistory[index - 1];
-        final suraName =
-            rec['suraName'] ?? getSuraName(rec['surahNumber'] ?? 1);
-        final rating = rec['rating'] ?? '';
-        final pagesCalculatedRaw = rec['pagesCalculated'];
-        final pages = pagesCalculatedRaw != null
-            ? double.tryParse(pagesCalculatedRaw.toString()) ?? 0
-            : (rec['pagesRecited'] ?? 0).toDouble();
-        final date = rec['date'] ?? rec['createdAt'] ?? '';
-        final homework = rec['homework'];
-        final isComplete = rec['isCompleteSura'] == true;
-        final meta = _ratingMeta(rating);
-
-        return Card(
-          margin: const EdgeInsets.only(bottom: 8),
-          shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14)),
-          child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    if (rating != 'DID_NOT_MEMORIZE')
-                      Flexible(
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: TaqwaColors.domeBlue
-                                .withValues(alpha: 0.08),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            suraName,
-                            style: const TextStyle(
-                              fontFamily: 'Cairo',
-                              fontSize: 13,
-                              fontWeight: FontWeight.bold,
-                              color: TaqwaColors.domeBlue,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ),
-                    if (rating != 'DID_NOT_MEMORIZE')
-                      const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: meta.color.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(meta.icon, size: 14, color: meta.color),
-                          const SizedBox(width: 4),
-                          Text(
-                            meta.label,
-                            style: TextStyle(
-                              fontFamily: 'Cairo',
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
-                              color: meta.color,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 12,
-                  runSpacing: 4,
-                  children: [
-                    if (pages > 0 && rating != 'DID_NOT_MEMORIZE')
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.description,
-                              size: 14, color: Colors.grey.shade400),
-                          const SizedBox(width: 4),
-                          Text(
-                            isComplete
-                                ? 'كاملة (${_formatPagesDecimal(pages)} ص)'
-                                : '${_formatPagesDecimal(pages)} صفحة',
-                            style: TextStyle(
-                              fontFamily: 'Cairo',
-                              fontSize: 11,
-                              color: Colors.grey.shade600,
-                            ),
-                          ),
-                        ],
-                      ),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.calendar_today,
-                            size: 14, color: Colors.grey.shade400),
-                        const SizedBox(width: 4),
-                        Text(
-                          _formatDate(date),
-                          style: TextStyle(
-                            fontFamily: 'Cairo',
-                            fontSize: 11,
-                            color: Colors.grey.shade500,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-                if (homework != null && homework.toString().isNotEmpty) ...[
-                  const SizedBox(height: 6),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: TaqwaColors.minaretGold.withValues(alpha: 0.06),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Icon(Icons.assignment,
-                            size: 14, color: TaqwaColors.minaretGold),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(
-                            homework.toString(),
-                            style: TextStyle(
-                              fontFamily: 'Cairo',
-                              fontSize: 12,
-                              color: Colors.amber.shade900,
-                            ),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        );
+        final row = rows[index];
+        if (row.type == 'day') return _buildDayHeader(row);
+        if (row.type == 'homework') return _buildHomeworkNote(row.homework!);
+        return row.entry!.isHadith
+            ? _buildHadithEntryCard(row.entry!.data)
+            : _buildQuranEntryCard(row.entry!.data);
       },
     );
   }
 
+  Widget _buildDayHeader(_TimelineRow row) {
+    final chips = <Widget>[
+      _dayChip(
+        row.count == 1
+            ? 'مقطع واحد'
+            : '${row.count} مقاطع',
+        Colors.grey.shade100,
+        Colors.grey.shade700,
+      ),
+    ];
+    if (row.pages > 0) {
+      chips.add(_dayChip(
+        _formatPagesDecimal(row.pages) + ' صفحة',
+        Colors.grey.shade100,
+        Colors.grey.shade700,
+      ));
+    }
+    chips.add(_dayChip(
+      row.points > 0
+          ? '+' + row.points.toStringAsFixed(2)
+          : 'بلا نقاط',
+      row.points > 0
+          ? TaqwaColors.minaretGold.withValues(alpha: 0.14)
+          : Colors.grey.shade100,
+      row.points > 0 ? const Color(0xFF854F0B) : Colors.grey.shade600,
+    ));
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 14, bottom: 8),
+      child: Row(
+        children: [
+          Text(
+            _dayLabel(row.dayKey!),
+            style: const TextStyle(
+              fontFamily: 'Cairo',
+              fontSize: 13.5,
+              fontWeight: FontWeight.bold,
+              color: Color(0xFF1A1A2E),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(child: Container(height: 1, color: Colors.grey.shade200)),
+          const SizedBox(width: 8),
+          Wrap(spacing: 5, children: chips),
+        ],
+      ),
+    );
+  }
+
+  Widget _dayChip(String label, Color bg, Color fg) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        label,
+        textDirection: TextDirection.rtl,
+        style: TextStyle(
+          fontFamily: 'Cairo',
+          fontSize: 10.5,
+          fontWeight: FontWeight.w600,
+          color: fg,
+        ),
+      ),
+    );
+  }
+
+  // Placeholder ranges are stored for DID_NOT_MEMORIZE rows (sura 1,
+  // ayah 1 to 1). Rendering that would invent a detail the instructor
+  // never entered, so the range is suppressed for them.
+  String _entryTitle(Map<String, dynamic> rec) {
+    final rating = rec['rating']?.toString() ?? '';
+    final sura = rec['suraName']?.toString() ?? '';
+    if (rating == 'DID_NOT_MEMORIZE') return _ratingMeta(rating).label;
+    if (rec['isCompleteSura'] == true) return sura + ' · كاملة';
+    final s = rec['startAya'];
+    final e = rec['endAya'];
+    if (s != null && e != null) {
+      return sura + ' · ' + s.toString() + ' – ' + e.toString();
+    }
+    return sura;
+  }
+
+  Widget _buildQuranEntryCard(Map<String, dynamic> rec) {
+    final rating = rec['rating']?.toString() ?? '';
+    final meta = _ratingMeta(rating);
+    final pages = _pagesOf(rec);
+    final points = _pointsOf(rec);
+    final ayaCount = (rec['ayaCount'] as num?)?.toInt() ?? 0;
+    final isNoMemo = rating == 'DID_NOT_MEMORIZE';
+
+    final facts = <String>[];
+    if (ayaCount > 0 && !isNoMemo) facts.add('$ayaCount آية');
+    if (pages > 0 && !isNoMemo) {
+      facts.add(_formatPagesDecimal(pages) + ' صفحة');
+    }
+    if (points != 0) {
+      facts.add('+' + points.toStringAsFixed(2) + ' نقطة');
+    }
+
+    return _entryShell(
+      edge: isNoMemo ? Colors.grey.shade400 : TaqwaColors.skyBlue,
+      title: _entryTitle(rec),
+      badgeLabel: meta.label,
+      badgeColor: meta.color,
+      facts: facts,
+      highlightLast: points != 0,
+    );
+  }
+
+  Widget _buildHadithEntryCard(Map<String, dynamic> h) {
+    final number = (h['hadithNumber'] as num?)?.toInt() ?? 0;
+    final points = _pointsOf(h);
+    final title = h['title']?.toString();
+
+    final facts = <String>[];
+    if (title != null && title.trim().isNotEmpty) facts.add(title);
+    if (points != 0) {
+      facts.add('+' + points.toStringAsFixed(2) + ' نقطة');
+    }
+
+    return _entryShell(
+      edge: const Color(0xFF7F77DD),
+      title: 'الحديث ' + number.toString(),
+      badgeLabel: 'الأربعين',
+      badgeColor: const Color(0xFF534AB7),
+      facts: facts,
+      highlightLast: points != 0,
+      leading: Icons.auto_stories_outlined,
+    );
+  }
+
+  // One shell for both kinds: identical geometry, different edge colour
+  // and badge, so a day mixing Quran and hadith still scans as one list.
+  Widget _entryShell({
+    required Color edge,
+    required String title,
+    required String badgeLabel,
+    required Color badgeColor,
+    required List<String> facts,
+    required bool highlightLast,
+    IconData? leading,
+  }) {
+    final factWidgets = <Widget>[];
+    for (var i = 0; i < facts.length; i++) {
+      if (i > 0) {
+        factWidgets.add(Container(
+          width: 1,
+          height: 9,
+          margin: const EdgeInsets.symmetric(horizontal: 8),
+          color: Colors.grey.shade300,
+        ));
+      }
+      final isPoints = highlightLast && i == facts.length - 1;
+      factWidgets.add(Flexible(
+        child: Text(
+          facts[i],
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontFamily: 'Cairo',
+            fontSize: 11,
+            fontWeight: isPoints ? FontWeight.w600 : FontWeight.normal,
+            color: isPoints
+                ? const Color(0xFF854F0B)
+                : Colors.grey.shade600,
+          ),
+        ),
+      ));
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 7),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: IntrinsicHeight(
+        child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(width: 3, color: edge),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 11, 12, 11),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      if (leading != null) ...[
+                        Icon(leading, size: 14, color: badgeColor),
+                        const SizedBox(width: 5),
+                      ],
+                      Expanded(
+                        child: Text(
+                          title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontFamily: 'Cairo',
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF1A1A2E),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 9, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: badgeColor.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          badgeLabel,
+                          style: TextStyle(
+                            fontFamily: 'Cairo',
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w600,
+                            color: badgeColor,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (factWidgets.isNotEmpty) ...[
+                    const SizedBox(height: 5),
+                    Row(children: factWidgets),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+      ),
+    );
+  }
+
+  Widget _buildHomeworkNote(String text) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: TaqwaColors.minaretGold.withValues(alpha: 0.09),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.assignment_outlined,
+              size: 14, color: Color(0xFF854F0B)),
+          const SizedBox(width: 7),
+          Expanded(
+            child: Text(
+              'الواجب: ' + text,
+              style: const TextStyle(
+                fontFamily: 'Cairo',
+                fontSize: 12,
+                height: 1.6,
+                color: Color(0xFF633806),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
   Widget _buildPointsTab() {
     return Column(
       children: [
@@ -1605,6 +1803,53 @@ class _InstructorStudentDetailScreenState
       return dateStr;
     }
   }
+}
+
+// One entry on the timeline. isHadith selects which card renders it;
+// both kinds carry a plain map so no model class has to be kept in
+// step with the backend response.
+class _TimelineEntry {
+  final bool isHadith;
+  final Map<String, dynamic> data;
+  const _TimelineEntry({required this.isHadith, required this.data});
+}
+
+// A flattened render row. Grouping produces headers, entries and an
+// optional homework note per day; flattening keeps the whole tab in a
+// single ListView.builder instead of nested scrollables.
+class _TimelineRow {
+  final String type;
+  final String? dayKey;
+  final int count;
+  final double pages;
+  final double points;
+  final _TimelineEntry? entry;
+  final String? homework;
+
+  const _TimelineRow._({
+    required this.type,
+    this.dayKey,
+    this.count = 0,
+    this.pages = 0,
+    this.points = 0,
+    this.entry,
+    this.homework,
+  });
+
+  factory _TimelineRow.day(
+    String key,
+    int count,
+    double pages,
+    double points,
+  ) =>
+      _TimelineRow._(type: 'day', dayKey: key, count: count,
+          pages: pages, points: points);
+
+  factory _TimelineRow.entry(_TimelineEntry e) =>
+      _TimelineRow._(type: 'entry', entry: e);
+
+  factory _TimelineRow.homework(String text) =>
+      _TimelineRow._(type: 'homework', homework: text);
 }
 
 class _TabBarDelegate extends SliverPersistentHeaderDelegate {
