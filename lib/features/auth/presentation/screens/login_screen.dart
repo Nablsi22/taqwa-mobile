@@ -167,6 +167,7 @@ class _LoginScreenState extends State<LoginScreen>
         _isLoading = false;
         _errorBannerMessage = authProvider.errorMessage;
       });
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(authProvider.errorMessage!, style: const TextStyle(fontFamily: 'Cairo'), textDirection: TextDirection.rtl), backgroundColor: Colors.red, duration: const Duration(seconds: 4)));
       _shakeController.forward(from: 0);
     } else {
       setState(() => _isLoading = false);
@@ -457,15 +458,17 @@ class _LoginScreenState extends State<LoginScreen>
   // ══════════════════════════════════════════════════════════════════
 
   Widget _buildErrorBanner() {
+    final providerError = context.watch<AuthProvider>().errorMessage;
+    final msg = _errorBannerMessage ?? providerError;
     return AnimatedSize(
       duration: const Duration(milliseconds: 260),
       curve: Curves.easeOutCubic,
-      child: _errorBannerMessage == null
+      child: msg == null
           ? const SizedBox(width: double.infinity, height: 0)
           : Padding(
               padding: const EdgeInsets.only(bottom: 16),
               child: _ErrorBanner(
-                message: _errorBannerMessage!,
+                message: msg,
                 onDismiss: () =>
                     setState(() => _errorBannerMessage = null),
               ),
