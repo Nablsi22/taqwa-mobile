@@ -17,6 +17,7 @@ class ApiConstants {
   static const String attendanceMark = '/attendance/mark';
   static const String attendanceSheet = '/attendance/sheet';
   static const String attendanceStats = '/attendance/stats';
+  static const String attendanceUnmark = '/attendance/unmark';
   static String attendanceStudent(String id) => '/attendance/student/$id';
 
   // Timeouts

@@ -74,6 +74,46 @@ class AttendanceProvider extends ChangeNotifier {
   }
 
   // ── Mark All with a Status ────────────────────────────
+  /// Status as persisted on the server, ignoring unsaved local edits.
+  /// Lets the screen tell a pending choice from a saved one.
+  String? savedStatusOf(String studentId) {
+    return _sheet?.students
+        .where((s) => s.studentId == studentId)
+        .firstOrNull
+        ?.status;
+  }
+
+  /// Drop an unsaved local choice. Nothing is sent anywhere.
+  void clearStatus(String studentId) {
+    _localStatuses.remove(studentId);
+    notifyListeners();
+  }
+
+  /// Delete a saved record and its points, then reload so the counters
+  /// and the server agree. Returns false and sets [error] on failure.
+  Future<bool> unmarkSaved(String studentId) async {
+    _isSaving = true;
+    _error = null;
+    notifyListeners();
+
+    try {
+      await _repository.unmarkAttendance(
+        date: _selectedDate,
+        studentIds: [studentId],
+      );
+      _localStatuses.remove(studentId);
+      await loadSheet();
+      _isSaving = false;
+      notifyListeners();
+      return true;
+    } catch (e) {
+      _error = e.toString();
+      _isSaving = false;
+      notifyListeners();
+      return false;
+    }
+  }
+
   void markAll(String status) {
     if (_sheet == null) return;
     for (final student in _sheet!.students) {

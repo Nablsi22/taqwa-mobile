@@ -48,6 +48,25 @@ class AttendanceRepository {
     }
   }
 
+  /// Clear saved attendance for the given students on a date.
+  /// The server deletes each record together with the points it awarded.
+  Future<void> unmarkAttendance({
+    required String date,
+    required List<String> studentIds,
+  }) async {
+    try {
+      await _apiClient.post(
+        ApiConstants.attendanceUnmark,
+        data: {
+          'date': date,
+          'studentIds': studentIds,
+        },
+      );
+    } on DioException catch (e) {
+      throw _handleError(e);
+    }
+  }
+
   /// Get stats for a date
   Future<Map<String, dynamic>> getStats(String date) async {
     try {

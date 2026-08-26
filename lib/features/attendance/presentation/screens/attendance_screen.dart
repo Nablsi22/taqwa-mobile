@@ -397,8 +397,8 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                   icon: Icons.check_circle,
                   color: Colors.green,
                   isActive: currentStatus == 'PRESENT',
-                  onTap: () =>
-                      provider.setStatus(student.studentId, 'PRESENT'),
+                  onTap: () => _handleStatusTap(
+                      student, 'PRESENT', currentStatus, provider),
                   tooltip: 'حاضر',
                 ),
                 const SizedBox(width: 6),
@@ -406,8 +406,8 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                   icon: Icons.access_time,
                   color: Colors.orange,
                   isActive: currentStatus == 'LATE',
-                  onTap: () =>
-                      provider.setStatus(student.studentId, 'LATE'),
+                  onTap: () => _handleStatusTap(
+                      student, 'LATE', currentStatus, provider),
                   tooltip: 'متأخر',
                 ),
                 const SizedBox(width: 6),
@@ -415,8 +415,8 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                   icon: Icons.cancel,
                   color: Colors.red,
                   isActive: currentStatus == 'ABSENT',
-                  onTap: () =>
-                      provider.setStatus(student.studentId, 'ABSENT'),
+                  onTap: () => _handleStatusTap(
+                      student, 'ABSENT', currentStatus, provider),
                   tooltip: 'غائب',
                 ),
               ],
@@ -425,6 +425,254 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
         ),
       ),
     );
+  }
+
+  // Tapping the active status clears it. An unsaved choice goes quietly;
+  // a saved one asks first, because confirming deletes a server record
+  // and the points that came with it.
+  Future<void> _handleStatusTap(
+    StudentAttendanceEntry student,
+    String tapped,
+    String? current,
+    AttendanceProvider provider,
+  ) async {
+    if (current != tapped) {
+      provider.setStatus(student.studentId, tapped);
+      return;
+    }
+
+    final saved = provider.savedStatusOf(student.studentId);
+    if (saved != tapped) {
+      provider.clearStatus(student.studentId);
+      return;
+    }
+
+    final ok = await _confirmUnmark(student, tapped);
+    if (ok != true || !mounted) return;
+
+    final done = await provider.unmarkSaved(student.studentId);
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          done ? 'تم إلغاء التحديد' : (provider.error ?? 'تعذّر إلغاء التحديد'),
+          style: const TextStyle(fontFamily: 'Cairo'),
+        ),
+        backgroundColor: done ? Colors.green : Colors.red,
+      ),
+    );
+  }
+
+  Future<bool?> _confirmUnmark(
+    StudentAttendanceEntry student,
+    String status,
+  ) {
+    final color = _statusColor(status);
+    final label = _statusLabel(status);
+    final points = _statusPoints(status);
+    final initial =
+        student.fullName.isNotEmpty ? student.fullName[0] : '?';
+
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: Dialog(
+          backgroundColor: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 22, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 52,
+                  height: 52,
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withValues(alpha: 0.12),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.backspace_outlined,
+                      size: 24, color: Colors.orange),
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  'إلغاء تحديد الحضور',
+                  style: const TextStyle(
+                    fontFamily: 'Cairo',
+                    fontSize: 17,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF1A1A2E),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'سيُحذف السجل والنقاط المرتبطة به، ويعود الطالب إلى حالة غير محدد',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontFamily: 'Cairo',
+                    fontSize: 13.5,
+                    height: 1.8,
+                    color: Colors.grey.shade600,
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF5F6FA),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 19,
+                        backgroundColor: color.withValues(alpha: 0.15),
+                        child: Text(
+                          initial,
+                          style: TextStyle(
+                            fontFamily: 'Cairo',
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                            color: color,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 11),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              student.fullName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontFamily: 'Cairo',
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF1A1A2E),
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'الحالة المسجّلة حاليًا',
+                              style: TextStyle(
+                                fontFamily: 'Cairo',
+                                fontSize: 11.5,
+                                color: Colors.grey.shade500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: color.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              label,
+                              style: TextStyle(
+                                fontFamily: 'Cairo',
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w600,
+                                color: color,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              points,
+                              textDirection: TextDirection.ltr,
+                              style: TextStyle(
+                                fontFamily: 'Cairo',
+                                fontSize: 12.5,
+                                color: color.withValues(alpha: 0.75),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 18),
+                SizedBox(
+                  width: double.infinity,
+                  height: 44,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.of(ctx).pop(true),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFFA32D2D),
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: Text(
+                      'إلغاء التحديد',
+                      style: const TextStyle(
+                        fontFamily: 'Cairo',
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                SizedBox(
+                  width: double.infinity,
+                  height: 44,
+                  child: TextButton(
+                    onPressed: () => Navigator.of(ctx).pop(false),
+                    child: Text(
+                      'تراجع',
+                      style: TextStyle(
+                        fontFamily: 'Cairo',
+                        fontSize: 14.5,
+                        color: Colors.grey.shade600,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _statusLabel(String status) {
+    switch (status) {
+      case 'PRESENT':
+        return 'حاضر';
+      case 'LATE':
+        return 'متأخر';
+      default:
+        return 'غائب';
+    }
+  }
+
+  String _statusPoints(String status) {
+    switch (status) {
+      case 'PRESENT':
+        return '+3';
+      case 'LATE':
+        return '-2';
+      default:
+        return '-5';
+    }
   }
 
   Color _statusColor(String? status) {
