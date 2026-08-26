@@ -13,20 +13,29 @@ class StudentRecitationsEnvelope {
   final List<Map<String, dynamic>> history;
   final Map<String, dynamic>? lastRecitation;
 
+  /// Nawawi-40 recordings, so the history tab can lay Quran and hadith
+  /// on one timeline. Empty when the backend predates the field.
+  final List<Map<String, dynamic>> hadithEntries;
+
   const StudentRecitationsEnvelope({
     required this.history,
     required this.lastRecitation,
+    this.hadithEntries = const [],
   });
 
   factory StudentRecitationsEnvelope.fromJson(Map<String, dynamic> json) {
     final rawHistory = (json['data'] as List?) ?? const [];
     final rawLast = json['lastRecitation'];
+    final rawHadith = (json['hadithEntries'] as List?) ?? const [];
     return StudentRecitationsEnvelope(
       history: rawHistory
           .map((e) => Map<String, dynamic>.from(e as Map))
           .toList(growable: false),
       lastRecitation:
           rawLast == null ? null : Map<String, dynamic>.from(rawLast as Map),
+      hadithEntries: rawHadith
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .toList(growable: false),
     );
   }
 }

@@ -125,6 +125,22 @@ class PointsApi {
     }
   }
 
+  /// Rank card for one student: { rank, total, totalPoints }.
+  ///
+  /// Prefer this over scanning [getLeaderboard]: the server holds the
+  /// single ranking implementation, the denominator is every active
+  /// student rather than the page size, and a student outside the top
+  /// N is still resolved.
+  Future<Map<String, dynamic>> getStudentRank(String studentId) async {
+    try {
+      final response =
+          await _apiClient.dio.get('/points/student/$studentId/rank');
+      return Map<String, dynamic>.from(response.data as Map);
+    } on DioException catch (e) {
+      throw _handleError(e);
+    }
+  }
+
   /// Get leaderboard
   Future<List<Map<String, dynamic>>> getLeaderboard({int limit = 20}) async {
     try {

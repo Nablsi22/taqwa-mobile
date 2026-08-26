@@ -257,7 +257,14 @@ class _AwardPointsModalState extends State<AwardPointsModal>
                             color: TaqwaColors.domeBlue),
                       )
                     : SingleChildScrollView(
-                        padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+                        // Keyboard-aware bottom inset - same rationale as
+                        // instructor_points_screen.dart.
+                        padding: EdgeInsets.fromLTRB(
+                          20,
+                          8,
+                          20,
+                          24 + mq.viewInsets.bottom,
+                        ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
