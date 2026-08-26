@@ -63,3 +63,16 @@ ios/Runner/firebase_app_id_file.json
 /test_f.jpg
 /test_maven.xml
 *.bak
+
+# Session artifacts
+*.bak
+*.backup*
+.idea/
+*.iml
+Untitled-*.dart
+test_*.png
+test_*.jpg
+test_maven.xml
+
+# Backend has its own repository
+backend/
