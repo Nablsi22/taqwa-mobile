@@ -3,6 +3,9 @@
 > Written 2026-10-22 at the end of a Claude (cloud) session, so work can continue in Claude Code.
 > Read this whole file before touching anything. Anas writes in Levantine Arabic — reply in Arabic.
 
+> **Status 2026-10-25 ~12:15 Damascus — DEPLOYED.** Backend `2f986e3` is ACTIVE on Railway (auto-deployed by the push; the seed hotfix `4ae8546` ran alone first at ~11:53 and logged `Seed: admin exists, 0 new categories.` + `Courses: 3 found, none changed. Active course: winter-2026-2027 (id=24).`). 14 migrations applied; the boot reached `Taqwa API running` (CMD is `&&`-chained, so migrations + all three seeds succeeded); every `/attendance-stats`, `/substitute`, `/supervisor` route is mapped; Firebase initialised. `db-snapshot` compare, before `exports/db-snapshot-20261025-115227.json` → after `exports/db-snapshot-20261025-121504-compare.json`: **IDENTICAL** — every earlier row unchanged, 33 schema changes, all additions (winter course got required_days {6} + optional_days {4} from the migration). App commit `107728e` (v1.0.10+12) pushed.
+> **Still open:** (1) APK 1.0.10 on every instructor's and the director's phone before the next session — the server now refuses «سورة كاملة» from older apps with an Arabic "update the app" message; (2) smoke test + create the director account from «حساب مدير الدورة»; (3) secret rotation (Postgres Regenerate, JWT pair, Firebase key) — postponed by Anas; the DB password has been exposed in chat, so do it soon. Rotating the JWT pair logs everyone out, parents included. Then Phase 4 (notifications).
+
 ## Project
 
 - Flutter app (this folder, `lib/`) + NestJS 11 / Prisma 5.22 / PostgreSQL backend in `backend/` (its own git repo, deployed to Railway; Dockerfile CMD runs `prisma migrate deploy && node prisma/seed_admin.js && node prisma/seed-rules.js && node prisma/seed-terms.js && node dist/main.js` on **every boot**).
