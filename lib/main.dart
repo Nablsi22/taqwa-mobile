@@ -7,11 +7,13 @@ import 'core/network/api_client.dart';
 import 'core/storage/secure_storage_service.dart';
 import 'features/auth/data/repositories/auth_repository.dart';
 import 'features/auth/presentation/providers/auth_provider.dart';
+import 'features/terms/presentation/providers/term_provider.dart';
 import 'features/auth/presentation/screens/login_screen.dart';
 import 'features/auth/domain/enums/user_role.dart';
 import 'features/admin/presentation/screens/admin_home_screen.dart';
 import 'features/student_dashboard/presentation/screens/student_dashboard_screen.dart';
 import 'features/instructor_home/presentation/screens/instructor_dashboard_screen.dart';
+import 'features/supervisor/presentation/screens/supervisor_home_screen.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'core/services/notification_service.dart';
@@ -37,8 +39,16 @@ void main() async {
   );
 
   runApp(
-    ChangeNotifierProvider(
-      create: (_) => AuthProvider(authRepository: authRepository),
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(
+          create: (_) => AuthProvider(authRepository: authRepository),
+        ),
+        // Courses (دورات) are app-wide: the leaderboard, a student's points
+        // and the recording screens all have to agree on which course is on
+        // screen and which one new records land in.
+        ChangeNotifierProvider(create: (_) => TermProvider()),
+      ],
       child: const TaqwaApp(),
     ),
   );
@@ -54,6 +64,12 @@ class TaqwaApp extends StatefulWidget {
 class _TaqwaAppState extends State<TaqwaApp> {
   bool _showSplash = true;
 
+  // Held directly rather than looked up again in dispose(): reading a
+  // provider off a defunct element throws, and this widget is torn down with
+  // the app.
+  AuthProvider? _auth;
+  VoidCallback? _authListener;
+
   @override
   void initState() {
     super.initState();
@@ -62,6 +78,51 @@ class _TaqwaAppState extends State<TaqwaApp> {
       await Future.delayed(const Duration(seconds: 4));
       if (mounted) setState(() => _showSplash = false);
     });
+    _loadTermsWhenSignedIn();
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // COURSES (دورات)
+  //
+  // The course list needs a token, so it is fetched once sign-in completes
+  // and cleared on sign-out — otherwise the next user to sign in on the same
+  // device would inherit the previous one's course selection.
+  //
+  // Only ADMIN and INSTRUCTOR fetch it: GET /terms is closed to students, and
+  // their screens never need it — with no `termId` sent, the backend answers
+  // with the active course, which is exactly what a student should see.
+  // ═══════════════════════════════════════════════════════════════════
+  void _loadTermsWhenSignedIn() {
+    final auth = context.read<AuthProvider>();
+    _auth = auth;
+
+    void sync() {
+      // Deferred: AuthProvider may notify mid-build, and TermProvider
+      // notifying back from inside that frame would rebuild during layout.
+      Future.microtask(() {
+        if (!mounted) return;
+        final terms = context.read<TermProvider>();
+        final user = auth.user;
+        if (!auth.isAuthenticated || user == null) {
+          terms.reset();
+          return;
+        }
+        if (user.role == UserRole.admin || user.role == UserRole.instructor) {
+          terms.load();
+        }
+      });
+    }
+
+    _authListener = sync;
+    auth.addListener(sync);
+    sync();
+  }
+
+  @override
+  void dispose() {
+    final listener = _authListener;
+    if (listener != null) _auth?.removeListener(listener);
+    super.dispose();
   }
 
   @override
@@ -100,6 +161,8 @@ class _TaqwaAppState extends State<TaqwaApp> {
               return const InstructorDashboardScreen();
             case UserRole.student:
               return const StudentDashboardScreen();
+            case UserRole.supervisor:
+              return const SupervisorHomeScreen();
           }
         },
       ),

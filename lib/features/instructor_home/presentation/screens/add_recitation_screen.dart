@@ -2,83 +2,81 @@ import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import '../../../../core/theme/taqwa_colors.dart';
 import '../../../../core/widgets/points_display.dart';
-import '../../../../core/constants/quran_metadata.dart';
 import '../../../../core/constants/quran_ayat_metadata.dart';
 import '../../../recitation/data/recitation_api.dart';
-import '../../../recitation/presentation/widgets/sura_multi_select_picker.dart';
 import '../../../../core/network/api_client.dart';
+import '../../../terms/presentation/widgets/term_selector.dart';
 
-/// Mode for an individual segment inside a session.
-enum _SegmentMode { fullSurahs, ayaRange }
+// ╔═══════════════════════════════════════════════════════════════════╗
+// WHY THERE IS NO "WHOLE SURA" MODE ANY MORE
+//
+// Whole-sura entries used a per-surah page table while aya ranges were
+// measured against the mushaf page map, and the two disagreed badly — an
+// audit of production data put whole-sura entries 40-75% above the exact
+// figure for the same content. Two students who memorised the same ayat
+// could end up with very different points depending on which button their
+// instructor pressed.
+//
+// A segment is now always a verse range: سورة + من آية + إلى آية. One
+// measurement, one formula, identical for everyone. The backend refuses the
+// old shape outright, so this is not merely a hidden button.
+// ╚═══════════════════════════════════════════════════════════════════╝
 
 /// Top-level branch selector: Quran recitation (existing flow) vs the
 /// Nawawi-40 hadith flow. Default is [quran] so the screen opens exactly
 /// as before.
 enum _RecitationTab { quran, hadith }
 
-/// A single memorization segment in a multi-segment session.
-/// - `fullSurahs` mode: one or more complete suras (multi-select).
-/// - `ayaRange`  mode: a range of ayas within a single sura.
+/// One memorization segment: a verse range inside a single sura.
 ///
 /// Each segment carries its OWN `rating` (VERY_GOOD / GOOD / REPEAT).
-/// DID_NOT_MEMORIZE is a session-level state (the "لم يحفظ اليوم"
-/// toggle) — never a per-segment rating.
+/// DID_NOT_MEMORIZE is a session-level state (the "لم يحفظ اليوم" toggle) —
+/// never a per-segment rating.
 class _RecitationSegment {
   _RecitationSegment({
     required this.id,
-    this.mode = _SegmentMode.fullSurahs,
-    List<int>? fullSurahs,
     this.ayaSurah,
     this.startAya = 1,
     this.endAya = 1,
     this.rating = '',
-  }) : fullSurahs = fullSurahs ?? [];
+  });
 
   final int id;
-  _SegmentMode mode;
-  List<int> fullSurahs;
   int? ayaSurah;
   int startAya;
   int endAya;
   String rating;
 
-  /// Pages contributed by this segment.
+  /// Ayat in this segment — THE definition, matching the backend's
+  /// getVerseCount() exactly:  verseCount = endAya - startAya + 1.
+  /// No rounding, no estimation, no dependence on which sura it is.
+  int get verseCount {
+    if (ayaSurah == null) return 0;
+    if (startAya < 1 || endAya < startAya) return 0;
+    return endAya - startAya + 1;
+  }
+
+  /// Mushaf pages this segment spans. Display only — the server recomputes
+  /// it from the same range before awarding a single point, so a tampered or
+  /// out-of-date client cannot inflate a score.
   double get pages {
-    if (mode == _SegmentMode.fullSurahs) {
-      final sum = fullSurahs.fold<double>(
-        0,
-        (acc, n) => acc + (getSuraByNumber(n)?.totalPages ?? 0).toDouble(),
-      );
-      return double.parse(sum.toStringAsFixed(2));
-    }
     if (ayaSurah != null && endAya >= startAya) {
       return calculateLocalPages(ayaSurah!, startAya, endAya);
     }
     return 0;
   }
 
-  /// True only when content is filled AND a rating is selected.
-  bool get isValid {
-    if (rating.isEmpty) return false;
-    return hasContent;
-  }
+  /// True only when the range is filled AND a rating is selected.
+  bool get isValid => rating.isNotEmpty && hasContent;
 
-  /// True when the segment has the minimum content required for its mode.
-  bool get hasContent {
-    if (mode == _SegmentMode.fullSurahs) return fullSurahs.isNotEmpty;
-    return ayaSurah != null && endAya >= startAya;
-  }
+  /// A sura and a range that is the right way round. The ceiling (endAya
+  /// within the sura's ayah count) is held by the stepper's max and
+  /// re-checked server-side by validateRange().
+  bool get hasContent =>
+      ayaSurah != null && startAya >= 1 && endAya >= startAya;
 
-  /// Payload shape consumed by the backend batch endpoint.
-  /// Includes `rating` per the per-segment-ratings contract.
+  /// Payload consumed by the backend batch endpoint.
   Map<String, dynamic> toBackendPayload() {
-    if (mode == _SegmentMode.fullSurahs) {
-      return {
-        'type': 'FULL_SURA',
-        'rating': rating,
-        'surahNumbers': List<int>.from(fullSurahs),
-      };
-    }
     return {
       'type': 'AYA_RANGE',
       'rating': rating,
@@ -187,12 +185,10 @@ class _AddRecitationScreenState extends State<AddRecitationScreen> {
   @override
   void initState() {
     super.initState();
-    // Default first segment starts in aya-range mode with auto-suggestion,
-    // which is the most common recitation pattern.
-    _segments.add(_RecitationSegment(
-      id: _nextSegmentId++,
-      mode: _SegmentMode.ayaRange,
-    ));
+    // The first segment is pre-filled from where the student left off, which
+    // is the most common recitation pattern. The suggestion spans courses:
+    // memorisation continues even though points restart.
+    _segments.add(_RecitationSegment(id: _nextSegmentId++));
     _loadNextSuggestionForFirstSegment();
   }
 
@@ -214,22 +210,20 @@ class _AddRecitationScreenState extends State<AddRecitationScreen> {
       if (mounted && surah != null && aya != null && _segments.isNotEmpty) {
         setState(() {
           final first = _segments.first;
-          if (first.mode == _SegmentMode.ayaRange) {
-            first.ayaSurah = surah;
-            first.startAya = aya;
-            first.endAya = aya;
-          }
+          first.ayaSurah = surah;
+          first.startAya = aya;
+          first.endAya = aya;
         });
       }
     } catch (_) {
+      // Suggestion is a convenience, never a gate: fall back to الفاتحة 1
+      // so the instructor can still pick a sura by hand.
       if (mounted && _segments.isNotEmpty) {
         setState(() {
           final first = _segments.first;
-          if (first.mode == _SegmentMode.ayaRange) {
-            first.ayaSurah = 1;
-            first.startAya = 1;
-            first.endAya = 1;
-          }
+          first.ayaSurah = 1;
+          first.startAya = 1;
+          first.endAya = 1;
         });
       }
     } finally {
@@ -242,10 +236,7 @@ class _AddRecitationScreenState extends State<AddRecitationScreen> {
   // ═══════════════════════════════════════════════════════════════════
   void _addSegment() {
     setState(() {
-      _segments.add(_RecitationSegment(
-        id: _nextSegmentId++,
-        mode: _SegmentMode.fullSurahs,
-      ));
+      _segments.add(_RecitationSegment(id: _nextSegmentId++));
     });
   }
 
@@ -254,43 +245,15 @@ class _AddRecitationScreenState extends State<AddRecitationScreen> {
     setState(() => _segments.removeWhere((s) => s.id == id));
   }
 
-  void _setSegmentMode(_RecitationSegment seg, _SegmentMode mode) {
-    if (seg.mode == mode) return;
-    setState(() {
-      seg.mode = mode;
-      // Reset mode-specific fields on switch for predictable behavior.
-      // Rating is preserved across mode switches.
-      if (mode == _SegmentMode.fullSurahs) {
-        seg.ayaSurah = null;
-        seg.startAya = 1;
-        seg.endAya = 1;
-      } else {
-        seg.fullSurahs = [];
-      }
-    });
-  }
-
   double get _totalPages =>
       _segments.fold<double>(0, (sum, s) => sum + s.pages);
+
+  int get _totalVerses =>
+      _segments.fold<int>(0, (sum, s) => sum + s.verseCount);
 
   // ═══════════════════════════════════════════════════════════════════
   // Surah pickers
   // ═══════════════════════════════════════════════════════════════════
-  Future<void> _openFullSurahPicker(_RecitationSegment seg) async {
-    final result = await SuraMultiSelectPicker.show(
-      context: context,
-      initialSelection: seg.fullSurahs,
-    );
-    if (result == null) return;
-    setState(() {
-      seg.fullSurahs = result.selectedSurahNumbers;
-    });
-  }
-
-  void _removeFullSurah(_RecitationSegment seg, int number) {
-    setState(() => seg.fullSurahs.remove(number));
-  }
-
   Future<void> _openAyaSurahPicker(_RecitationSegment seg) async {
     final picked = await showModalBottomSheet<int>(
       context: context,
@@ -352,8 +315,27 @@ class _AddRecitationScreenState extends State<AddRecitationScreen> {
       }
       for (int i = 0; i < _segments.length; i++) {
         final seg = _segments[i];
-        if (!seg.hasContent) {
-          return _showError('المقطع ${i + 1}: يرجى إكمال البيانات');
+        // Client-side mirror of the backend's validateRange(). It exists to
+        // give the instructor an immediate, specific message; the server and
+        // the recitations_verse_range_chk constraint remain the authority.
+        if (seg.ayaSurah == null) {
+          return _showError('المقطع ${i + 1}: يرجى اختيار السورة');
+        }
+        final surahInfo = getAyaSurah(seg.ayaSurah!);
+        if (surahInfo == null) {
+          return _showError('المقطع ${i + 1}: رقم السورة غير صالح');
+        }
+        if (seg.startAya < 1) {
+          return _showError(
+              'المقطع ${i + 1}: آية البداية يجب أن تكون 1 أو أكثر');
+        }
+        if (seg.endAya > surahInfo.numAyas) {
+          return _showError(
+              'المقطع ${i + 1}: سورة ${surahInfo.nameAr} عدد آياتها '
+              '${surahInfo.numAyas} فقط');
+        }
+        if (seg.endAya < seg.startAya) {
+          return _showError('المقطع ${i + 1}: «إلى آية» يجب ألا تقل عن «من آية»');
         }
         if (seg.rating.isEmpty) {
           return _showError('المقطع ${i + 1}: يرجى اختيار التقييم');
@@ -429,6 +411,11 @@ class _AddRecitationScreenState extends State<AddRecitationScreen> {
             children: [
               _buildModeToggle(),
               const SizedBox(height: 12),
+              // Which course this entry is filed under — always the ACTIVE
+              // one, shown before the form so a session can't be logged
+              // against the wrong course without anyone noticing.
+              const ActiveTermRecordingBanner(),
+              const SizedBox(height: 12),
               if (_tab == _RecitationTab.quran) ...[
                 _buildDateCard(),
                 const SizedBox(height: 12),
@@ -441,8 +428,8 @@ class _AddRecitationScreenState extends State<AddRecitationScreen> {
                   ],
                   _buildAddSegmentButton(),
                   const SizedBox(height: 12),
-                  if (_totalPages > 0) _buildTotalPagesCard(),
-                  if (_totalPages > 0) const SizedBox(height: 12),
+                  if (_totalVerses > 0) _buildTotalPagesCard(),
+                  if (_totalVerses > 0) const SizedBox(height: 12),
                 ],
                 _buildHomeworkSection(),
                 const SizedBox(height: 24),
@@ -999,15 +986,8 @@ class _AddRecitationScreenState extends State<AddRecitationScreen> {
           ),
           const SizedBox(height: 10),
 
-          // Mode toggle (per segment)
-          _buildSegmentModeToggle(seg),
-          const SizedBox(height: 14),
-
-          // Mode-specific body
-          if (seg.mode == _SegmentMode.fullSurahs)
-            ..._buildFullSurahsBody(seg)
-          else
-            ..._buildAyaRangeBody(seg, isFirst: index == 0),
+          // Verse range — the only accepted shape.
+          ..._buildAyaRangeBody(seg, isFirst: index == 0),
 
           // Per-segment rating — only shown once the segment has content,
           // to keep the UI clean for empty/just-added segments.
@@ -1016,68 +996,6 @@ class _AddRecitationScreenState extends State<AddRecitationScreen> {
             _buildSegmentRatingPicker(seg),
           ],
         ],
-      ),
-    );
-  }
-
-  Widget _buildSegmentModeToggle(_RecitationSegment seg) {
-    return Container(
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF5F6FA),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        children: [
-          _modeChip(
-            label: 'سور كاملة',
-            icon: Icons.menu_book,
-            selected: seg.mode == _SegmentMode.fullSurahs,
-            onTap: () => _setSegmentMode(seg, _SegmentMode.fullSurahs),
-          ),
-          _modeChip(
-            label: 'نطاق آيات',
-            icon: Icons.format_list_numbered,
-            selected: seg.mode == _SegmentMode.ayaRange,
-            onTap: () => _setSegmentMode(seg, _SegmentMode.ayaRange),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _modeChip({
-    required String label,
-    required IconData icon,
-    required bool selected,
-    required VoidCallback onTap,
-  }) {
-    return Expanded(
-      child: GestureDetector(
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          padding: const EdgeInsets.symmetric(vertical: 10),
-          decoration: BoxDecoration(
-            color: selected ? TaqwaColors.domeBlue : Colors.transparent,
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon,
-                  size: 16,
-                  color: selected ? Colors.white : Colors.grey.shade500),
-              const SizedBox(width: 6),
-              Text(label,
-                  style: TextStyle(
-                      fontFamily: 'Cairo',
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.bold,
-                      color: selected ? Colors.white : Colors.grey.shade600)),
-            ],
-          ),
-        ),
       ),
     );
   }
@@ -1174,101 +1092,6 @@ class _AddRecitationScreenState extends State<AddRecitationScreen> {
     );
   }
 
-  // ── Body: full surahs ──
-  List<Widget> _buildFullSurahsBody(_RecitationSegment seg) {
-    return [
-      InkWell(
-        onTap: () => _openFullSurahPicker(seg),
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          decoration: BoxDecoration(
-            color: seg.fullSurahs.isNotEmpty
-                ? TaqwaColors.domeBlue.withValues(alpha: 0.04)
-                : Colors.grey.shade50,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-                color: seg.fullSurahs.isNotEmpty
-                    ? TaqwaColors.domeBlue.withValues(alpha: 0.2)
-                    : Colors.grey.shade200),
-          ),
-          child: Row(
-            children: [
-              Icon(
-                  seg.fullSurahs.isNotEmpty
-                      ? Icons.library_books_rounded
-                      : Icons.touch_app,
-                  color: seg.fullSurahs.isNotEmpty
-                      ? TaqwaColors.domeBlue
-                      : Colors.grey.shade400,
-                  size: 20),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  seg.fullSurahs.isEmpty
-                      ? 'اضغط لاختيار السور'
-                      : 'تم اختيار ${seg.fullSurahs.length} ${seg.fullSurahs.length == 1 ? "سورة" : "سور"}',
-                  style: TextStyle(
-                      fontFamily: 'Cairo',
-                      fontSize: 14.5,
-                      fontWeight: seg.fullSurahs.isNotEmpty
-                          ? FontWeight.bold
-                          : FontWeight.w500,
-                      color: seg.fullSurahs.isNotEmpty
-                          ? TaqwaColors.domeBlue
-                          : Colors.grey.shade400),
-                ),
-              ),
-              Icon(Icons.arrow_drop_down, color: Colors.grey.shade400),
-            ],
-          ),
-        ),
-      ),
-      if (seg.fullSurahs.isNotEmpty) ...[
-        const SizedBox(height: 10),
-        Wrap(
-          spacing: 6,
-          runSpacing: 6,
-          children: seg.fullSurahs.map((num) {
-            final s = getSuraByNumber(num);
-            if (s == null) return const SizedBox.shrink();
-            return Container(
-              padding: const EdgeInsets.fromLTRB(10, 6, 6, 6),
-              decoration: BoxDecoration(
-                color: TaqwaColors.domeBlue.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                    color: TaqwaColors.domeBlue.withValues(alpha: 0.25)),
-              ),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Text(s.nameAr,
-                    style: const TextStyle(
-                        fontFamily: 'Cairo',
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.bold,
-                        color: TaqwaColors.domeBlue)),
-                const SizedBox(width: 6),
-                InkWell(
-                  onTap: () => _removeFullSurah(seg, num),
-                  child: Container(
-                    padding: const EdgeInsets.all(2),
-                    decoration: BoxDecoration(
-                        color: TaqwaColors.domeBlue.withValues(alpha: 0.15),
-                        shape: BoxShape.circle),
-                    child: const Icon(Icons.close,
-                        size: 12, color: TaqwaColors.domeBlue),
-                  ),
-                ),
-              ]),
-            );
-          }).toList(),
-        ),
-        const SizedBox(height: 10),
-        _buildSegmentPagesPill(seg.pages),
-      ],
-    ];
-  }
-
   // ── Body: aya range ──
   List<Widget> _buildAyaRangeBody(_RecitationSegment seg,
       {required bool isFirst}) {
@@ -1337,12 +1160,15 @@ class _AddRecitationScreenState extends State<AddRecitationScreen> {
           setState(() => seg.endAya = v);
         }),
         const SizedBox(height: 12),
-        _buildSegmentPagesPill(seg.pages),
+        _buildSegmentMeasurePill(seg),
       ],
     ];
   }
 
-  Widget _buildSegmentPagesPill(double pages) {
+  /// What this segment actually measures: the ayah count (the exact figure
+  /// the points formula is built on) and the mushaf pages it spans. Both are
+  /// shown so the instructor can sanity-check the range before saving.
+  Widget _buildSegmentMeasurePill(_RecitationSegment seg) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
@@ -1352,26 +1178,24 @@ class _AddRecitationScreenState extends State<AddRecitationScreen> {
       ),
       child: Row(
         children: [
-          const Icon(Icons.description, size: 18, color: TaqwaColors.domeBlue),
+          const Icon(Icons.format_list_numbered,
+              size: 18, color: TaqwaColors.domeBlue),
           const SizedBox(width: 8),
-          Text('صفحات هذا المقطع:',
-              style: TextStyle(
-                  fontFamily: 'Cairo',
-                  fontSize: 12,
-                  color: Colors.grey.shade700)),
-          const Spacer(),
-          Text(_formatPages(pages),
+          Text('${seg.verseCount} آية',
               style: const TextStyle(
                   fontFamily: 'Cairo',
-                  fontSize: 16,
+                  fontSize: 14,
                   fontWeight: FontWeight.bold,
                   color: TaqwaColors.domeBlue)),
-          const SizedBox(width: 4),
-          Text('ص',
+          const Spacer(),
+          Icon(Icons.description, size: 16, color: Colors.grey.shade500),
+          const SizedBox(width: 6),
+          Text('${_formatPages(seg.pages)} ص',
               style: TextStyle(
                   fontFamily: 'Cairo',
-                  fontSize: 12,
-                  color: Colors.grey.shade600)),
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey.shade700)),
         ],
       ),
     );
@@ -1433,18 +1257,23 @@ class _AddRecitationScreenState extends State<AddRecitationScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('إجمالي الصفحات',
+                Text('إجمالي التسميع',
                     style: TextStyle(
                         fontFamily: 'Cairo',
                         fontSize: 12,
                         color: Colors.grey.shade700)),
                 const SizedBox(height: 2),
-                Text('${_formatPages(_totalPages)} صفحة',
+                Text('$_totalVerses آية',
                     style: const TextStyle(
                         fontFamily: 'Cairo',
                         fontSize: 22,
                         fontWeight: FontWeight.bold,
                         color: TaqwaColors.islamicGreen)),
+                Text('${_formatPages(_totalPages)} صفحة من المصحف',
+                    style: TextStyle(
+                        fontFamily: 'Cairo',
+                        fontSize: 11,
+                        color: Colors.grey.shade600)),
               ],
             ),
           ),

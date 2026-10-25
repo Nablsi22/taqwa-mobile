@@ -1,7 +1,11 @@
 enum UserRole {
   admin('ADMIN'),
   instructor('INSTRUCTOR'),
-  student('STUDENT');
+  student('STUDENT'),
+
+  /// Course director: read-only oversight of the instructors.
+  /// Has its own screens and its own server routes (/supervisor).
+  supervisor('SUPERVISOR');
 
   final String value;
   const UserRole(this.value);
@@ -22,6 +26,8 @@ enum UserRole {
         return 'معلم';
       case UserRole.student:
         return 'طالب';
+      case UserRole.supervisor:
+        return 'مدير الدورة';
     }
   }
 }

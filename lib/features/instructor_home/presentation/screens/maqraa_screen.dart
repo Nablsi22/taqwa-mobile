@@ -3,15 +3,23 @@ import '../../../../core/theme/taqwa_colors.dart';
 import '../../../../core/constants/quran_metadata.dart';
 import '../../../../core/network/api_client.dart';
 import '../../../recitation/data/recitation_api.dart';
+import '../../../substitute/presentation/substitute_ui.dart';
 
 class MaqraaScreen extends StatefulWidget {
   final List<Map<String, dynamic>> students;
   final String instructorId;
 
+  /// Set when this مقرأة belongs to another حلقة («حلقات أخرى»): the screen
+  /// then wears the by-proxy colours and names the instructor it is for, so
+  /// it is never mistaken for your own حلقة. Either way the server records
+  /// the account that saved it as the one who taught.
+  final SubstituteMode? substitute;
+
   const MaqraaScreen({
     super.key,
     required this.students,
     required this.instructorId,
+    this.substitute,
   });
 
   @override
@@ -21,9 +29,16 @@ class MaqraaScreen extends StatefulWidget {
 class _MaqraaScreenState extends State<MaqraaScreen> {
   final _recitationApi = RecitationApi(ApiClient.instance);
 
+  SubstituteMode? get _substitute => widget.substitute;
+  bool get _byProxy => _substitute != null;
+
+  /// Gold for your own مقرأة, violet when it is someone else's حلقة.
+  Color get _accent =>
+      _byProxy ? SubstituteColors.header : TaqwaColors.minaretGold;
+
   int? _selectedSuraNumber;
   DateTime _selectedDate = DateTime.now();
-  final _pagesController = TextEditingController();
+
   bool _isSaving = false;
 
   // Student selection
@@ -35,12 +50,6 @@ class _MaqraaScreenState extends State<MaqraaScreen> {
     // Select all students by default
     _selectedStudentIds =
         widget.students.map((s) => s['studentId'] as String).toSet();
-  }
-
-  @override
-  void dispose() {
-    _pagesController.dispose();
-    super.dispose();
   }
 
   void _showSuraPicker() {
@@ -135,13 +144,13 @@ class _MaqraaScreenState extends State<MaqraaScreen> {
                           ),
                           selected: isSelected,
                           selectedTileColor:
-                              TaqwaColors.minaretGold.withOpacity(0.08),
+                              TaqwaColors.minaretGold.withValues(alpha: 0.08),
                           leading: Container(
                             width: 34,
                             height: 34,
                             decoration: BoxDecoration(
                               color:
-                                  TaqwaColors.minaretGold.withOpacity(0.1),
+                                  TaqwaColors.minaretGold.withValues(alpha: 0.1),
                               borderRadius: BorderRadius.circular(8),
                             ),
                             child: Center(
@@ -223,13 +232,12 @@ class _MaqraaScreenState extends State<MaqraaScreen> {
       final dateStr =
           '${_selectedDate.year}-${_selectedDate.month.toString().padLeft(2, '0')}-${_selectedDate.day.toString().padLeft(2, '0')}';
 
-      final pages = double.tryParse(_pagesController.text) ?? 0;
-
+      // No page count is sent: a مقرأة awards no points, so there is
+      // nothing for a page figure to influence.
       await _recitationApi.createBulkMaqraa(
         studentIds: _selectedStudentIds.toList(),
         surahNumber: _selectedSuraNumber!,
         date: dateStr,
-        pagesRecited: pages,
       );
 
       if (mounted) {
@@ -278,13 +286,14 @@ class _MaqraaScreenState extends State<MaqraaScreen> {
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
-        backgroundColor: const Color(0xFFF5F6FA),
+        backgroundColor:
+            _byProxy ? SubstituteColors.surface : const Color(0xFFF5F6FA),
         appBar: AppBar(
-          title: const Text(
-            'مقرأة جماعية',
-            style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold),
+          title: Text(
+            _byProxy ? 'مقرأة حلقة أ. ${_substitute!.instructorName}' : 'مقرأة جماعية',
+            style: const TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold),
           ),
-          backgroundColor: TaqwaColors.minaretGold,
+          backgroundColor: _accent,
           foregroundColor: Colors.white,
           elevation: 0,
         ),
@@ -293,14 +302,23 @@ class _MaqraaScreenState extends State<MaqraaScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // Whose حلقة this is — before anything that can be saved.
+              if (_byProxy) ...[
+                SubstituteBanner(
+                  instructorName: _substitute!.instructorName,
+                  subtitle: 'الطلاب يبقون في حلقتهم · يُحفظ باسمك كمسجِّل',
+                  onSurface: true,
+                ),
+                const SizedBox(height: 14),
+              ],
               // ── Info banner ──
               Container(
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
-                  color: TaqwaColors.minaretGold.withOpacity(0.08),
+                  color: TaqwaColors.minaretGold.withValues(alpha: 0.08),
                   borderRadius: BorderRadius.circular(14),
                   border: Border.all(
-                      color: TaqwaColors.minaretGold.withOpacity(0.2)),
+                      color: TaqwaColors.minaretGold.withValues(alpha: 0.2)),
                 ),
                 child: Row(
                   children: [
@@ -370,12 +388,12 @@ class _MaqraaScreenState extends State<MaqraaScreen> {
                         horizontal: 16, vertical: 14),
                     decoration: BoxDecoration(
                       color: selectedSura != null
-                          ? TaqwaColors.minaretGold.withOpacity(0.05)
+                          ? TaqwaColors.minaretGold.withValues(alpha: 0.05)
                           : Colors.grey.shade50,
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(
                         color: selectedSura != null
-                            ? TaqwaColors.minaretGold.withOpacity(0.3)
+                            ? TaqwaColors.minaretGold.withValues(alpha: 0.3)
                             : Colors.grey.shade200,
                       ),
                     ),
@@ -416,44 +434,40 @@ class _MaqraaScreenState extends State<MaqraaScreen> {
 
               const SizedBox(height: 12),
 
-              // ── Pages (optional for maqraa) ──
-              _card(
-                icon: Icons.description,
-                title: 'عدد الصفحات (اختياري)',
-                child: TextField(
-                  controller: _pagesController,
-                  textAlign: TextAlign.center,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  style: const TextStyle(
-                      fontFamily: 'Cairo',
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold),
-                  decoration: InputDecoration(
-                    hintText: '0',
-                    hintStyle: TextStyle(
-                        fontFamily: 'Cairo', color: Colors.grey.shade300),
-                    filled: true,
-                    fillColor: Colors.grey.shade50,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(color: Colors.grey.shade200),
+              // ── What a مقرأة is ──
+              //
+              // Group reading with the instructor. It is recorded so parents
+              // can see the session happened; it is NOT memorisation and it
+              // awards no points, up or down. There is deliberately no page
+              // or verse field: a free-typed page count was the last place
+              // where two students could end up scored differently for the
+              // same session.
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: TaqwaColors.lightBlue,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                      color: TaqwaColors.domeBlue.withValues(alpha: 0.15)),
+                ),
+                child: const Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.info_outline,
+                        size: 18, color: TaqwaColors.domeBlue),
+                    SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'المقرأة إعلام لأولياء الأمور بأن جلسة قراءة جماعية جرت اليوم. '
+                        'لا تُضاف ولا تُخصم أي نقاط.',
+                        style: TextStyle(
+                            fontFamily: 'Cairo',
+                            fontSize: 12,
+                            height: 1.7,
+                            color: TaqwaColors.domeBlue),
+                      ),
                     ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(color: Colors.grey.shade200),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide:
-                          const BorderSide(color: TaqwaColors.minaretGold),
-                    ),
-                    suffixText: 'صفحة',
-                    suffixStyle: TextStyle(
-                        fontFamily: 'Cairo',
-                        fontSize: 12,
-                        color: Colors.grey.shade500),
-                  ),
+                  ],
                 ),
               ),
 
@@ -509,7 +523,7 @@ class _MaqraaScreenState extends State<MaqraaScreen> {
                         margin: const EdgeInsets.only(bottom: 4),
                         decoration: BoxDecoration(
                           color: isSelected
-                              ? TaqwaColors.islamicGreen.withOpacity(0.05)
+                              ? TaqwaColors.islamicGreen.withValues(alpha: 0.05)
                               : null,
                           borderRadius: BorderRadius.circular(10),
                         ),
@@ -558,7 +572,7 @@ class _MaqraaScreenState extends State<MaqraaScreen> {
                 child: ElevatedButton(
                   onPressed: _isSaving ? null : _save,
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: TaqwaColors.minaretGold,
+                    backgroundColor: _accent,
                     foregroundColor: Colors.white,
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(14)),
@@ -609,7 +623,7 @@ class _MaqraaScreenState extends State<MaqraaScreen> {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.03),
+            color: Colors.black.withValues(alpha: 0.03),
             blurRadius: 10,
             offset: const Offset(0, 2),
           ),

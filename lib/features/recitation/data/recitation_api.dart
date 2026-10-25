@@ -150,6 +150,18 @@ class RecitationApi {
   final ApiClient _client;
   RecitationApi(this._client);
 
+  // ═══════════════════════════════════════════════════════════════
+  // COURSE (دورة) SCOPING — same contract as PointsApi:
+  //   null → the ACTIVE course · 0 → every course · >0 → that course
+  // ═══════════════════════════════════════════════════════════════
+  static Map<String, dynamic> _withTerm(
+    Map<String, dynamic> params,
+    int? termId,
+  ) {
+    if (termId == null) return params;
+    return {...params, 'termId': termId};
+  }
+
   // ─────────────────────────────────────────────────────────────
   // Sura list (multi-select picker)
   // ─────────────────────────────────────────────────────────────
@@ -259,8 +271,13 @@ class RecitationApi {
   // unchanged so this remains source-compatible with any other
   // callers that ignore the new field.
   // ─────────────────────────────────────────────────────────────
-  Future<List<Map<String, dynamic>>> getInstructorOverview() async {
-    final response = await _client.get('/recitations/overview');
+  Future<List<Map<String, dynamic>>> getInstructorOverview({
+    int? termId,
+  }) async {
+    final response = await _client.get(
+      '/recitations/overview',
+      queryParameters: _withTerm(const {}, termId),
+    );
     final data = response.data['data'] as List;
     return data.cast<Map<String, dynamic>>();
   }
@@ -276,9 +293,14 @@ class RecitationApi {
   // Kept untouched for any existing caller. Prefer
   // [getStudentHistoryWithSession] for the instructor detail screen.
   // ─────────────────────────────────────────────────────────────
-  Future<List<Map<String, dynamic>>> getStudentHistory(String studentId) async {
-    final response =
-        await _client.get('/recitations/student/$studentId/history');
+  Future<List<Map<String, dynamic>>> getStudentHistory(
+    String studentId, {
+    int? termId,
+  }) async {
+    final response = await _client.get(
+      '/recitations/student/$studentId/history',
+      queryParameters: _withTerm(const {}, termId),
+    );
     final data = response.data['data'] as List;
     return data.cast<Map<String, dynamic>>();
   }
@@ -287,10 +309,13 @@ class RecitationApi {
   // D2 NEW — recitation history + last-session envelope, single round-trip.
   // ─────────────────────────────────────────────────────────────
   Future<StudentRecitationsEnvelope> getStudentHistoryWithSession(
-    String studentId,
-  ) async {
-    final response =
-        await _client.get('/recitations/student/$studentId/history');
+    String studentId, {
+    int? termId,
+  }) async {
+    final response = await _client.get(
+      '/recitations/student/$studentId/history',
+      queryParameters: _withTerm(const {}, termId),
+    );
     final raw = Map<String, dynamic>.from(response.data as Map);
     return StudentRecitationsEnvelope.fromJson(raw);
   }

@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../../../core/theme/taqwa_colors.dart';
 import '../../../../core/network/api_client.dart';
 import '../../../../core/widgets/points_display.dart';
 import '../../../../core/extensions/points_formatting.dart';
+import '../../../terms/presentation/providers/term_provider.dart';
+import '../../../terms/presentation/widgets/term_selector.dart';
 import 'admin_student_detail_screen.dart';
 
 class AdminLeaderboardScreen extends StatefulWidget {
@@ -61,7 +64,16 @@ class _AdminLeaderboardScreenState extends State<AdminLeaderboardScreen> {
   Future<void> _loadLeaderboard() async {
     setState(() => _isLoading = true);
     try {
-      final res = await ApiClient.instance.get('/points/leaderboard?limit=100');
+      // Ranks are per-course. `termId` absent = the active course, which is
+      // what an admin who never touches the selector should see.
+      final termId = context.read<TermProvider>().viewedTermIdParam;
+      final res = await ApiClient.instance.get(
+        '/points/leaderboard',
+        queryParameters: {
+          'limit': 100,
+          if (termId != null) 'termId': termId,
+        },
+      );
       final data = res.data['data'] as List? ?? [];
       setState(() {
         _students = data.map((e) => Map<String, dynamic>.from(e)).toList();
@@ -107,6 +119,7 @@ class _AdminLeaderboardScreenState extends State<AdminLeaderboardScreen> {
                     });
                   },
                 ),
+                TermSelectorAction(onChanged: _loadLeaderboard),
               ],
               flexibleSpace: _students.length >= 3 && !_showSearch
                   ? FlexibleSpaceBar(
@@ -138,6 +151,9 @@ class _AdminLeaderboardScreenState extends State<AdminLeaderboardScreen> {
                           style: TextStyle(fontFamily: 'Cairo', fontSize: 16)))
                   : Column(
                       children: [
+                        const TermContextBanner(
+                          margin: EdgeInsets.fromLTRB(16, 12, 16, 0),
+                        ),
                         if (_searchController.text.isNotEmpty)
                           Container(
                             padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),

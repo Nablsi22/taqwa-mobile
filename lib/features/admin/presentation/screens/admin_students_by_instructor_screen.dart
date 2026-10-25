@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../../../core/theme/taqwa_colors.dart';
 import '../../../../core/network/api_client.dart';
+import '../../../terms/presentation/providers/term_provider.dart';
+import '../../../terms/presentation/widgets/term_selector.dart';
 import 'admin_student_detail_screen.dart';
 
 class AdminStudentsByInstructorScreen extends StatefulWidget {
@@ -44,8 +47,16 @@ class _AdminStudentsByInstructorScreenState
     setState(() => _isLoadingStudents = true);
     try {
       // ═══ SINGLE API CALL — backend already returns totalPoints ═══
-      final res = await ApiClient.instance
-          .get('/students?instructorId=$instructorId');
+      // Course-scoped: totalPoints here is this حلقة's standing in the
+      // selected course, not a running lifetime total.
+      final termId = context.read<TermProvider>().viewedTermIdParam;
+      final res = await ApiClient.instance.get(
+        '/students',
+        queryParameters: {
+          'instructorId': instructorId,
+          if (termId != null) 'termId': termId,
+        },
+      );
       final data = res.data['data'] as List? ?? res.data as List? ?? [];
       setState(() {
         _students = data.map((e) => Map<String, dynamic>.from(e)).toList();
@@ -69,6 +80,12 @@ class _AdminStudentsByInstructorScreenState
             style: const TextStyle(fontFamily: 'Cairo', color: Colors.white),
           ),
           iconTheme: const IconThemeData(color: Colors.white),
+          actions: [
+            TermSelectorAction(onChanged: () {
+              final id = _selectedInstructorId;
+              if (id != null) _loadStudents(id);
+            }),
+          ],
           leading: IconButton(
             icon: const Icon(Icons.arrow_back),
             onPressed: () {

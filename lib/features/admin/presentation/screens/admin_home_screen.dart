@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import '../../../supervisor/presentation/screens/supervisor_accounts_screen.dart';
+import '../../../supervisor/presentation/screens/supervisor_home_screen.dart';
 import '../../../../core/theme/taqwa_colors.dart';
 import '../../../../core/network/api_client.dart';
 import '../../../announcement/presentation/screens/announcement_list_screen.dart';
@@ -11,12 +13,11 @@ import 'admin_instructor_attendance_screen.dart';
 import 'admin_leaderboard_screen.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
 import 'package:provider/provider.dart';
-import '../../../students/presentation/screens/add_student_screen.dart';
-import '../../../instructor/presentation/screens/add_edit_instructor_screen.dart';
 import 'admin_manage_students_screen.dart';
 import 'admin_manage_instructors_screen.dart';
 import '../../../../core/widgets/taqwa_slogan_banner.dart';
 import 'admin_credentials_screen.dart';
+import '../../../terms/presentation/screens/admin_terms_screen.dart';
 
 class AdminHomeScreen extends StatefulWidget {
   const AdminHomeScreen({super.key});
@@ -33,6 +34,21 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
   int _instructorPresent = 0;
   int _instructorAbsent = 0;
   bool _isLoading = true;
+
+  // ── Course attendance overview (GET /attendance-stats/overview) ──
+  // Absent on servers that predate it; the screen then falls back to the
+  // old "today" figures, so a new APK never breaks against an old backend.
+  bool _hasOverview = false;
+  int _regularStudents = 0;
+  int _activeStudents = 0;
+  int _studentExcused = 0;
+  int _windowWeeks = 4;
+  int _regularMaxMissed = 1;
+
+  /// The day the attendance cards describe: «آخر يوم دوام» from the server,
+  /// or null when the figures are for today (older server, or no session
+  /// recorded in the course yet).
+  String? _sessionDay;
 
   @override
   void initState() {
@@ -70,6 +86,64 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
     return const [];
   }
 
+  static int _asInt(dynamic v) {
+    if (v is num) return v.toInt();
+    if (v is String) return int.tryParse(v) ?? 0;
+    return 0;
+  }
+
+  static String _isoDay(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+  static const _weekdaysAr = [
+    'الاثنين',
+    'الثلاثاء',
+    'الأربعاء',
+    'الخميس',
+    'الجمعة',
+    'السبت',
+    'الأحد',
+  ];
+
+  /// 'YYYY-MM-DD' → «السبت 17/10». Parsed as a calendar day in UTC so no
+  /// device time zone can move it.
+  static String _dayLabel(String isoDay) {
+    final d = DateTime.tryParse('${isoDay}T00:00:00Z');
+    if (d == null) return isoDay;
+    return '${_weekdaysAr[d.weekday - 1]} ${d.day}/${d.month}';
+  }
+
+  /// Regular / active students and the last session day's attendance.
+  /// Returns false when the server has no such endpoint yet.
+  Future<bool> _loadCourseOverview() async {
+    try {
+      final res = await ApiClient.instance.get('/attendance-stats/overview');
+      final body = res.data;
+      if (body is! Map) return false;
+      final students = body['students'];
+      final last = body['lastSession'];
+      final rules = body['rules'];
+      if (students is! Map || last is! Map) return false;
+
+      _regularStudents = _asInt(students['regular']);
+      _activeStudents = _asInt(students['active']);
+      if (rules is Map) {
+        final days = _asInt(rules['windowDays']);
+        if (days > 0) _windowWeeks = (days / 7).round();
+        _regularMaxMissed = _asInt(rules['regularMaxMissed']);
+      }
+
+      final day = last['date'];
+      _sessionDay = day is String ? day : null;
+      _studentPresent = _asInt(last['present']) + _asInt(last['late']);
+      _studentExcused = _asInt(last['excused']);
+      _studentAbsent = _asInt(last['absent']) + _studentExcused;
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<void> _loadDashboardStats() async {
     setState(() => _isLoading = true);
     try {
@@ -84,20 +158,27 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
       final instructorsList = _listFrom(instructorsBody);
       _totalInstructors = _countFrom(instructorsBody, instructorsList);
 
-      final today = DateTime.now().toIso8601String().split('T')[0];
+      final today = _isoDay(DateTime.now());
 
-      // ── Student attendance stats ──
-      try {
-        final statsRes =
-            await ApiClient.instance.get('/attendance/stats?date=$today');
-        _studentPresent = statsRes.data['present'] ?? 0;
-        _studentAbsent = statsRes.data['absent'] ?? 0;
-      } catch (_) {}
+      // ── Student attendance: the last session day of the course ──
+      _hasOverview = await _loadCourseOverview();
+      if (!_hasOverview) {
+        // Older server: today's figures, as before.
+        _sessionDay = null;
+        _studentExcused = 0;
+        try {
+          final statsRes =
+              await ApiClient.instance.get('/attendance/stats?date=$today');
+          _studentPresent = _asInt(statsRes.data['present']);
+          _studentAbsent = _asInt(statsRes.data['absent']);
+        } catch (_) {}
+      }
 
-      // ── Instructor attendance stats ──
+      // ── Instructor attendance, for the same day as the student cards ──
+      final attendanceDay = _sessionDay ?? today;
       try {
         final instSheetRes = await ApiClient.instance
-            .get('/instructor-attendance/sheet?date=$today');
+            .get('/instructor-attendance/sheet?date=$attendanceDay');
         final sheet = instSheetRes.data['sheet'] as List? ?? [];
         _instructorPresent = 0;
         _instructorAbsent = 0;
@@ -151,7 +232,7 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
                               width: 48,
                               height: 48,
                               decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.15),
+                                color: Colors.white.withValues(alpha: 0.15),
                                 borderRadius: BorderRadius.circular(14),
                               ),
                               child: const Icon(Icons.admin_panel_settings,
@@ -167,7 +248,7 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
                                 //   style: TextStyle(
                                 //     fontFamily: 'Cairo',
                                 //     fontSize: 13,
-                                //     color: Colors.white.withOpacity(0.8),
+                                //     color: Colors.white.withValues(alpha: 0.8),
                                 //   ),
 
                                 // ),
@@ -223,7 +304,35 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
                                     TaqwaColors.islamicGreen),
                               ],
                             ),
+                            if (_hasOverview) ...[
+                              const SizedBox(height: 10),
+                              // ── Row 1b: Regular / active students ──
+                              Row(
+                                children: [
+                                  _buildStatCard(
+                                      Icons.verified_user_outlined,
+                                      'الطلاب الثابتون',
+                                      '$_regularStudents',
+                                      const Color(0xFF16A085)),
+                                  const SizedBox(width: 10),
+                                  _buildStatCard(
+                                      Icons.how_to_reg_outlined,
+                                      'الطلاب النشِطون',
+                                      '$_activeStudents',
+                                      TaqwaColors.domeBlue),
+                                ],
+                              ),
+                              _buildCaption(
+                                  'الثابت: لم يغب أكثر من ${_regularMaxMissed == 1 ? 'مرة واحدة' : '$_regularMaxMissed مرات'} '
+                                  'خلال آخر $_windowWeeks أسابيع · '
+                                  'النشِط: حضر مرة على الأقل خلال آخر $_windowWeeks أسابيع'),
+                            ],
                             const SizedBox(height: 10),
+                            _buildCaption(_sessionDay != null
+                                ? 'الحضور في آخر يوم دوام: ${_dayLabel(_sessionDay!)}'
+                                : _hasOverview
+                                    ? 'لم يُسجَّل أي حضور في هذه الدورة بعد'
+                                    : 'الحضور اليوم'),
                             // ── Row 2: Student Attendance ──
                             Row(
                               children: [
@@ -235,7 +344,9 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
                                 const SizedBox(width: 10),
                                 _buildStatCard(
                                     Icons.highlight_off,
-                                    'طلاب غائبون',
+                                    _studentExcused > 0
+                                        ? 'طلاب غائبون (منهم $_studentExcused بعذر)'
+                                        : 'طلاب غائبون',
                                     '$_studentAbsent',
                                     Colors.red.shade600),
                               ],
@@ -286,6 +397,28 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
                         onTap: () =>
                             _navigate(const AdminInstructorAttendanceScreen()),
                       ),
+                      const SizedBox(height: 10),
+                      // What the course director sees, so it can be checked
+                      // before his account is given the SUPERVISOR role.
+                      _buildActionCard(
+                        icon: Icons.fact_check_outlined,
+                        title: 'لوحة مدير الدورة',
+                        subtitle: 'معاينة ما يراه المدير: الأساتذة والحضور والتسميع والنقاط',
+                        color: const Color(0xFF1B4F72),
+                        onTap: () =>
+                            _navigate(const SupervisorHomeScreen(preview: true)),
+                      ),
+                      const SizedBox(height: 10),
+                      // The director's own login: created and managed here,
+                      // separate from every أستاذ and admin account.
+                      _buildActionCard(
+                        icon: Icons.admin_panel_settings_outlined,
+                        title: 'حساب مدير الدورة',
+                        subtitle: 'إنشاء الحساب وتغيير كلمة المرور وإيقافه',
+                        color: TaqwaColors.islamicGreen,
+                        onTap: () =>
+                            _navigate(const SupervisorAccountsScreen()),
+                      ),
                     ],
                   ),
                 ),
@@ -332,6 +465,15 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
                         color: const Color(0xFF8E44AD),
                         onTap: () =>
                             _navigate(const AdminCredentialsScreen()),
+                      ),
+                      const SizedBox(height: 10),
+                      _buildActionCard(
+                        icon: Icons.event_note_rounded,
+                        title: 'إدارة الدورات',
+                        subtitle:
+                            'إنشاء دورة جديدة وتحديد الدورة الحالية وتصفح الدورات السابقة',
+                        color: TaqwaColors.islamicGreen,
+                        onTap: () => _navigate(const AdminTermsScreen()),
                       ),
                     ],
                   ),
@@ -457,6 +599,20 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
     );
   }
 
+  Widget _buildCaption(String text) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 6, 4, 6),
+      child: Align(
+        alignment: AlignmentDirectional.centerStart,
+        child: Text(text,
+            style: TextStyle(
+                fontFamily: 'Cairo',
+                fontSize: 11.5,
+                color: Colors.grey.shade600)),
+      ),
+    );
+  }
+
   Widget _buildStatCard(
       IconData icon, String label, String value, Color color) {
     return Expanded(
@@ -467,7 +623,7 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
           borderRadius: BorderRadius.circular(14),
           boxShadow: [
             BoxShadow(
-                color: color.withOpacity(0.12),
+                color: color.withValues(alpha: 0.12),
                 blurRadius: 10,
                 offset: const Offset(0, 4)),
           ],
@@ -511,7 +667,7 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
             borderRadius: BorderRadius.circular(16),
             boxShadow: [
               BoxShadow(
-                  color: color.withOpacity(0.1),
+                  color: color.withValues(alpha: 0.1),
                   blurRadius: 12,
                   offset: const Offset(0, 4)),
             ],
@@ -522,7 +678,7 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
                 width: 48,
                 height: 48,
                 decoration: BoxDecoration(
-                  color: color.withOpacity(0.12),
+                  color: color.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(14),
                 ),
                 child: Icon(icon, color: color, size: 26),

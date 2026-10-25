@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../../../core/theme/taqwa_colors.dart';
 import '../../../../core/network/api_client.dart';
 import '../../../../core/extensions/points_formatting.dart';
+import '../../../terms/presentation/providers/term_provider.dart';
+import '../../../terms/presentation/widgets/term_selector.dart';
 
 class AdminStudentDetailScreen extends StatefulWidget {
   final String studentId;
@@ -68,10 +71,20 @@ class _AdminStudentDetailScreenState extends State<AdminStudentDetailScreen>
     if (mounted) setState(() => _isLoading = false);
   }
 
+  /// Course whose figures this screen shows. Absent = the active course,
+  /// which is what an admin who never opens the selector should see.
+  Map<String, dynamic> get _termQuery {
+    if (!mounted) return const {};
+    final id = context.read<TermProvider>().viewedTermIdParam;
+    return id == null ? const {} : {'termId': id};
+  }
+
   Future<void> _loadStudentInfo() async {
     try {
-      final res =
-          await ApiClient.instance.get('/students/${widget.studentId}');
+      final res = await ApiClient.instance.get(
+        '/students/${widget.studentId}',
+        queryParameters: _termQuery,
+      );
       _studentInfo =
           Map<String, dynamic>.from(res.data is Map ? res.data : {});
     } catch (e) {
@@ -81,8 +94,10 @@ class _AdminStudentDetailScreenState extends State<AdminStudentDetailScreen>
 
   Future<void> _loadStats() async {
     try {
-      final res = await ApiClient.instance
-          .get('/students/${widget.studentId}/stats');
+      final res = await ApiClient.instance.get(
+        '/students/${widget.studentId}/stats',
+        queryParameters: _termQuery,
+      );
       _stats = Map<String, dynamic>.from(res.data is Map ? res.data : {});
     } catch (e) {
       debugPrint('Stats error: $e');
@@ -101,8 +116,10 @@ class _AdminStudentDetailScreenState extends State<AdminStudentDetailScreen>
 
   Future<void> _loadPointsLog() async {
     try {
-      final res = await ApiClient.instance
-          .get('/points/student/${widget.studentId}?limit=500');
+      final res = await ApiClient.instance.get(
+        '/points/student/${widget.studentId}',
+        queryParameters: {'limit': 500, ..._termQuery},
+      );
       final data = res.data;
       if (data is! Map) return;
 
@@ -127,8 +144,10 @@ class _AdminStudentDetailScreenState extends State<AdminStudentDetailScreen>
 
   Future<void> _loadRecitations() async {
     try {
-      final res = await ApiClient.instance
-          .get('/recitations/student/${widget.studentId}/history');
+      final res = await ApiClient.instance.get(
+        '/recitations/student/${widget.studentId}/history',
+        queryParameters: _termQuery,
+      );
       final data = res.data;
       if (data is Map) {
         final list = data['data'] as List? ?? [];
@@ -389,6 +408,7 @@ class _AdminStudentDetailScreenState extends State<AdminStudentDetailScreen>
                               style: const TextStyle(
                                   fontFamily: 'Cairo', color: Colors.white))
                           : null,
+                      actions: [TermSelectorAction(onChanged: _loadAllData)],
                       flexibleSpace: FlexibleSpaceBar(
                         background: _buildHeaderContent(),
                       ),

@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../../../core/theme/taqwa_colors.dart';
 import '../../../../core/network/api_client.dart';
-import '../../../../core/constants/quran_metadata.dart';
 import '../../../../core/widgets/points_display.dart';
 import '../../../../core/extensions/points_formatting.dart';
 import '../../../points/data/points_api.dart';
 import '../../../recitation/data/recitation_api.dart';
+import '../../../terms/presentation/providers/term_provider.dart';
+import '../../../terms/presentation/widgets/term_selector.dart';
+import '../../../attendance_stats/presentation/widgets/student_attendance_view.dart';
 import 'add_recitation_screen.dart';
 import '../../../points/presentation/widgets/award_points_modal.dart';
 
@@ -13,10 +16,25 @@ class InstructorStudentDetailScreen extends StatefulWidget {
   final String studentId;
   final String studentName;
 
+  /// Tab to open on — e.g. [attendanceTab] from an absentee.
+  final int initialTab;
+
+  /// Index of «الحضور» among the tabs.
+  static const int attendanceTab = 1;
+
+  /// Index of «التسميع» among the tabs.
+  static const int recitationTab = 2;
+
+  /// The course director's view: the same page, with nothing to add or
+  /// change — no «تسميع جديد», no «إضافة نقاط».
+  final bool readOnly;
+
   const InstructorStudentDetailScreen({
     super.key,
     required this.studentId,
     required this.studentName,
+    this.initialTab = 0,
+    this.readOnly = false,
   });
 
   @override
@@ -54,8 +72,14 @@ class _InstructorStudentDetailScreenState
   @override
   void initState() {
     super.initState();
-    // 5 tabs now: معلومات / التسميع / النقاط / الحفظ / الأربعين
-    _tabController = TabController(length: 5, vsync: this);
+    // 6 tabs: معلومات / الحضور / التسميع / النقاط / الحفظ / الأربعين
+    const tabCount = 6;
+    final initial = widget.initialTab;
+    _tabController = TabController(
+      length: tabCount,
+      vsync: this,
+      initialIndex: initial >= 0 && initial < tabCount ? initial : 0,
+    );
     _loadData();
   }
 
@@ -64,6 +88,13 @@ class _InstructorStudentDetailScreenState
     _tabController.dispose();
     super.dispose();
   }
+
+  /// Course whose figures this screen shows. Points, the recitation timeline
+  /// and the mosque rank are all read for this one course; the memorisation
+  /// map and the Nawawi progress are deliberately cumulative, because what a
+  /// student has memorised does not reset when a course ends.
+  int? get _termId =>
+      mounted ? context.read<TermProvider>().viewedTermIdParam : null;
 
   Future<void> _loadData() async {
     setState(() {
@@ -91,13 +122,20 @@ class _InstructorStudentDetailScreenState
   }
 
   Future<void> _loadStudentInfo() async {
-    final res = await ApiClient.instance.get('/students/${widget.studentId}');
+    final termId = _termId;
+    final res = await ApiClient.instance.get(
+      '/students/${widget.studentId}',
+      queryParameters: {if (termId != null) 'termId': termId},
+    );
     _studentInfo = res.data['data'] ?? res.data;
   }
 
   Future<void> _loadPoints() async {
     try {
-      final res = await _pointsApi.getStudentPoints(widget.studentId);
+      final res = await _pointsApi.getStudentPoints(
+        widget.studentId,
+        termId: _termId,
+      );
       final logData = res['data'] ?? [];
       if (logData is List) {
         _pointsLog =
@@ -111,8 +149,10 @@ class _InstructorStudentDetailScreenState
 
   // D2 — single round-trip envelope: history list + last-session detail
   Future<void> _loadRecitationHistory() async {
-    final envelope =
-        await _recitationApi.getStudentHistoryWithSession(widget.studentId);
+    final envelope = await _recitationApi.getStudentHistoryWithSession(
+      widget.studentId,
+      termId: _termId,
+    );
     _recitationHistory = envelope.history;
     _lastRecitation = envelope.lastRecitation;
     _hadithEntries = envelope.hadithEntries;
@@ -149,7 +189,10 @@ class _InstructorStudentDetailScreenState
       // One request, two integers. The previous implementation pulled
       // the top 100 and used the list length as the denominator, which
       // both understated the field and lost anyone ranked below 100th.
-      final rank = await _pointsApi.getStudentRank(widget.studentId);
+      final rank = await _pointsApi.getStudentRank(
+        widget.studentId,
+        termId: _termId,
+      );
       _studentRank = (rank['rank'] as num?)?.toInt() ?? 0;
       _totalStudentsCount = (rank['total'] as num?)?.toInt() ?? 0;
     } catch (_) {}
@@ -296,6 +339,7 @@ class _InstructorStudentDetailScreenState
                             ),
                             tabs: const [
                               Tab(text: 'معلومات'),
+                              Tab(text: 'الحضور'),
                               Tab(text: 'التسميع'),
                               Tab(text: 'النقاط'),
                               Tab(text: 'الحفظ'),
@@ -309,6 +353,12 @@ class _InstructorStudentDetailScreenState
                       controller: _tabController,
                       children: [
                         _buildInfoTab(),
+                        StudentAttendanceView(
+                          studentId: widget.studentId,
+                          studentName: widget.studentName,
+                          termId: _termId,
+                          phone: _studentInfo['phone1']?.toString(),
+                        ),
                         _buildRecitationTab(),
                         _buildPointsTab(),
                         _buildProgressTab(),
@@ -319,11 +369,17 @@ class _InstructorStudentDetailScreenState
         floatingActionButton: AnimatedBuilder(
           animation: _tabController,
           builder: (context, _) {
-            final isPointsTab = _tabController.index == 2;
-            final isHadithTab = _tabController.index == 4;
+            if (widget.readOnly) return const SizedBox.shrink();
+            final index = _tabController.index;
+            final isPointsTab = index == 3;
+            final isHadithTab = index == 5;
 
-            // No FAB on the Nawawi map — it's a read-only overview.
-            if (isHadithTab) return const SizedBox.shrink();
+            // No FAB on the attendance view or the Nawawi map — both are
+            // read-only overviews.
+            if (index == InstructorStudentDetailScreen.attendanceTab ||
+                isHadithTab) {
+              return const SizedBox.shrink();
+            }
 
             if (isPointsTab) {
               return FloatingActionButton.extended(
@@ -367,6 +423,7 @@ class _InstructorStudentDetailScreenState
       pinned: true,
       backgroundColor: TaqwaColors.domeBlue,
       foregroundColor: Colors.white,
+      actions: [TermSelectorAction(onChanged: _loadData)],
       flexibleSpace: FlexibleSpaceBar(
         background: Container(
           decoration: const BoxDecoration(

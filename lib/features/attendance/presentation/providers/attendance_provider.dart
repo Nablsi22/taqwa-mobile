@@ -1,7 +1,14 @@
 import 'package:flutter/foundation.dart';
+import '../../../../core/utils/meeting_days.dart';
 import '../../data/models/attendance_sheet_model.dart';
 import '../../data/repositories/attendance_repository.dart';
 
+/// Attendance sheet for one حلقة on one day.
+///
+/// Statuses on screen are PRESENT, LATE, ABSENT and EXCUSED («غائب بعذر»).
+/// EXCUSED is not a server status: it is sent as ABSENT with `excused: true`.
+/// Nothing is ever recorded automatically — a student nobody tapped stays
+/// unrecorded and is not sent.
 class AttendanceProvider extends ChangeNotifier {
   final AttendanceRepository _repository;
   final String? instructorId;
@@ -15,13 +22,14 @@ class AttendanceProvider extends ChangeNotifier {
   // Local state: tracks status changes before saving
   final Map<String, String> _localStatuses = {};
 
+  /// [initialDate] (YYYY-MM-DD) opens the sheet on a given day — the last
+  /// meeting day, typically. Omitted → today, as before.
   AttendanceProvider({
     required AttendanceRepository repository,
     this.instructorId,
+    String? initialDate,
   }) : _repository = repository {
-    final now = DateTime.now();
-    _selectedDate =
-        '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    _selectedDate = initialDate ?? isoDay(DateTime.now());
   }
 
   // ── Getters ───────────────────────────────────────────
@@ -32,12 +40,23 @@ class AttendanceProvider extends ChangeNotifier {
   String get selectedDate => _selectedDate;
   bool get hasUnsavedChanges => _localStatuses.isNotEmpty;
 
+  /// «غائب بعذر» is offered only when the server understands it.
+  bool get supportsExcused => _sheet?.supportsExcused ?? false;
+
+  DayKind? get dayKind => _sheet?.dayKind;
+
+  /// Students with no status at all, saved or pending.
+  int get unmarkedCount {
+    final s = _sheet;
+    if (s == null) return 0;
+    return s.students.where((st) => getStatus(st.studentId) == null).length;
+  }
+
+  StudentAttendanceEntry? _entry(String studentId) =>
+      _sheet?.students.where((s) => s.studentId == studentId).firstOrNull;
+
   String? getStatus(String studentId) {
-    return _localStatuses[studentId] ??
-        _sheet?.students
-            .where((s) => s.studentId == studentId)
-            .firstOrNull
-            ?.status;
+    return _localStatuses[studentId] ?? _entry(studentId)?.effectiveStatus;
   }
 
   // ── Load Sheet ────────────────────────────────────────
@@ -69,19 +88,14 @@ class AttendanceProvider extends ChangeNotifier {
 
   // ── Set Status Locally ────────────────────────────────
   void setStatus(String studentId, String status) {
+    if (status == 'EXCUSED' && !supportsExcused) return;
     _localStatuses[studentId] = status;
     notifyListeners();
   }
 
-  // ── Mark All with a Status ────────────────────────────
   /// Status as persisted on the server, ignoring unsaved local edits.
   /// Lets the screen tell a pending choice from a saved one.
-  String? savedStatusOf(String studentId) {
-    return _sheet?.students
-        .where((s) => s.studentId == studentId)
-        .firstOrNull
-        ?.status;
-  }
+  String? savedStatusOf(String studentId) => _entry(studentId)?.effectiveStatus;
 
   /// Drop an unsaved local choice. Nothing is sent anywhere.
   void clearStatus(String studentId) {
@@ -114,10 +128,23 @@ class AttendanceProvider extends ChangeNotifier {
     }
   }
 
+  // ── Mark All with a Status ────────────────────────────
   void markAll(String status) {
     if (_sheet == null) return;
     for (final student in _sheet!.students) {
       _localStatuses[student.studentId] = status;
+    }
+    notifyListeners();
+  }
+
+  /// Give [status] only to students who have none yet — e.g. «الباقي غائب»
+  /// after tapping the ones who came. Nobody already marked is touched.
+  void markRemaining(String status) {
+    if (_sheet == null) return;
+    for (final student in _sheet!.students) {
+      if (getStatus(student.studentId) == null) {
+        _localStatuses[student.studentId] = status;
+      }
     }
     notifyListeners();
   }
@@ -134,13 +161,21 @@ class AttendanceProvider extends ChangeNotifier {
       final entries = <Map<String, dynamic>>[];
 
       for (final student in _sheet!.students) {
-        final status = _localStatuses[student.studentId] ?? student.status;
-        if (status != null) {
-          entries.add({
-            'studentId': student.studentId,
-            'status': status,
-          });
+        final status = _localStatuses[student.studentId] ?? student.effectiveStatus;
+        if (status == null) continue;
+
+        final entry = <String, dynamic>{
+          'studentId': student.studentId,
+          'status': status == 'EXCUSED' ? 'ABSENT' : status,
+        };
+        // `excused` is sent only when it changes something, so a sheet that
+        // never touches an excuse stays valid on a server without the field.
+        if (status == 'EXCUSED') {
+          entry['excused'] = true;
+        } else if (status == 'ABSENT' && student.effectiveStatus == 'EXCUSED') {
+          entry['excused'] = false;
         }
+        entries.add(entry);
       }
 
       if (entries.isEmpty) {

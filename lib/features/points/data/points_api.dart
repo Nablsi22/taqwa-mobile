@@ -7,6 +7,25 @@ class PointsApi {
   PointsApi(this._apiClient);
 
   // ═══════════════════════════════════════════════════════════════
+  // COURSE (دورة) SCOPING
+  //
+  // Every read below takes an optional [termId]:
+  //   null → send nothing → the backend answers with the ACTIVE course
+  //   0    → every course (full history)
+  //   > 0  → that specific course
+  //
+  // Omitting it is what the app did before courses had a selector, so a
+  // caller that has not been updated keeps behaving exactly as it did.
+  // ═══════════════════════════════════════════════════════════════
+  static Map<String, dynamic> _withTerm(
+    Map<String, dynamic> params,
+    int? termId,
+  ) {
+    if (termId == null) return params;
+    return {...params, 'termId': termId};
+  }
+
+  // ═══════════════════════════════════════════════════════════════
   // RULES — read manual rules from the rules table (source of truth)
   // ═══════════════════════════════════════════════════════════════
 
@@ -113,11 +132,13 @@ class PointsApi {
     String studentId, {
     int page = 1,
     int limit = 30,
+    int? termId,
   }) async {
     try {
       final response = await _apiClient.dio.get(
         '/points/student/$studentId',
-        queryParameters: {'page': page, 'limit': limit},
+        queryParameters:
+            _withTerm({'page': page, 'limit': limit}, termId),
       );
       return response.data;
     } on DioException catch (e) {
@@ -131,22 +152,31 @@ class PointsApi {
   /// single ranking implementation, the denominator is every active
   /// student rather than the page size, and a student outside the top
   /// N is still resolved.
-  Future<Map<String, dynamic>> getStudentRank(String studentId) async {
+  Future<Map<String, dynamic>> getStudentRank(
+    String studentId, {
+    int? termId,
+  }) async {
     try {
-      final response =
-          await _apiClient.dio.get('/points/student/$studentId/rank');
+      final response = await _apiClient.dio.get(
+        '/points/student/$studentId/rank',
+        queryParameters: _withTerm(const {}, termId),
+      );
       return Map<String, dynamic>.from(response.data as Map);
     } on DioException catch (e) {
       throw _handleError(e);
     }
   }
 
-  /// Get leaderboard
-  Future<List<Map<String, dynamic>>> getLeaderboard({int limit = 20}) async {
+  /// Leaderboard for one course. Ranks are computed over that course's points
+  /// alone, so a new course opens with everyone on zero.
+  Future<List<Map<String, dynamic>>> getLeaderboard({
+    int limit = 20,
+    int? termId,
+  }) async {
     try {
       final response = await _apiClient.dio.get(
         '/points/leaderboard',
-        queryParameters: {'limit': limit},
+        queryParameters: _withTerm({'limit': limit}, termId),
       );
       final data = response.data['data'] as List;
       return data.map((e) => Map<String, dynamic>.from(e)).toList();

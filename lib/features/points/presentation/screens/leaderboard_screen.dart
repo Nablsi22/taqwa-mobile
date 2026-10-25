@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../../../core/theme/taqwa_colors.dart';
 import '../../../../core/network/api_client.dart';
+import '../../../terms/presentation/providers/term_provider.dart';
+import '../../../terms/presentation/widgets/term_selector.dart';
 import '../../data/points_api.dart';
 
 class LeaderboardScreen extends StatefulWidget {
@@ -29,7 +32,12 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
     });
 
     try {
-      final data = await _pointsApi.getLeaderboard(limit: 50);
+      // Ranks belong to one course: switching the selector re-reads the same
+      // board for that course, it never mixes two courses' points.
+      final data = await _pointsApi.getLeaderboard(
+        limit: 50,
+        termId: context.read<TermProvider>().viewedTermIdParam,
+      );
       setState(() {
         _leaderboard = data;
         _isLoading = false;
@@ -56,6 +64,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
           backgroundColor: TaqwaColors.domeBlue,
           foregroundColor: Colors.white,
           elevation: 0,
+          actions: [TermSelectorAction(onChanged: _loadLeaderboard)],
         ),
         body: _isLoading
             ? const Center(
@@ -96,18 +105,42 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                                 color: Colors.grey.shade600,
                               ),
                             ),
+                            const SizedBox(height: 6),
+                            Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 32),
+                              child: Text(
+                                'كل دورة تبدأ من الصفر — ستظهر الأسماء هنا مع أول تسميع.',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontFamily: 'Cairo',
+                                  fontSize: 12.5,
+                                  height: 1.7,
+                                  color: Colors.grey.shade500,
+                                ),
+                              ),
+                            ),
                           ],
                         ),
                       )
                     : RefreshIndicator(
                         onRefresh: _loadLeaderboard,
-                        child: ListView.builder(
-                          padding: const EdgeInsets.all(16),
-                          itemCount: _leaderboard.length,
-                          itemBuilder: (context, index) {
-                            final student = _leaderboard[index];
-                            return _buildRankCard(student, index);
-                          },
+                        child: Column(
+                          children: [
+                            // Names the course these ranks belong to, so an
+                            // archived board is never read as today's.
+                            const TermContextBanner(),
+                            Expanded(
+                              child: ListView.builder(
+                                padding: const EdgeInsets.all(16),
+                                itemCount: _leaderboard.length,
+                                itemBuilder: (context, index) {
+                                  final student = _leaderboard[index];
+                                  return _buildRankCard(student, index);
+                                },
+                              ),
+                            ),
+                          ],
                         ),
                       ),
       ),

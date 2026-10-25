@@ -2,12 +2,20 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../../core/theme/taqwa_colors.dart';
 import '../../../../core/network/api_client.dart';
-import '../../../../core/constants/quran_metadata.dart';
+import '../../../../core/utils/meeting_days.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
+import '../../../attendance_stats/data/attendance_stats_api.dart';
+import '../../../attendance_stats/data/attendance_stats_models.dart';
 import '../../../recitation/data/recitation_api.dart';
+import '../../../terms/presentation/providers/term_provider.dart';
+import '../../../terms/presentation/widgets/term_selector.dart';
 import '../../../attendance/data/repositories/attendance_repository.dart';
 import '../../../attendance/presentation/providers/attendance_provider.dart';
 import '../../../attendance/presentation/screens/attendance_screen.dart';
+import '../../../substitute/presentation/screens/other_halaqas_screen.dart';
+import '../../../substitute/presentation/substitute_ui.dart';
+import '../widgets/last_session_card.dart';
+import 'halaqa_attendance_screen.dart';
 import 'instructor_student_detail_screen.dart';
 import 'maqraa_screen.dart';
 import 'instructor_points_screen.dart';
@@ -26,6 +34,7 @@ class InstructorDashboardScreen extends StatefulWidget {
 
 class _InstructorDashboardScreenState extends State<InstructorDashboardScreen> {
   final _recitationApi = RecitationApi(ApiClient.instance);
+  final _statsApi = AttendanceStatsApi(ApiClient.instance);
 
   bool _isLoading = true;
   String? _error;
@@ -38,6 +47,12 @@ class _InstructorDashboardScreenState extends State<InstructorDashboardScreen> {
   // anybody.
   final Map<String, int> _circleRank = {};
   _RosterSort _sort = _RosterSort.points;
+
+  // Last session card. Loaded beside the roster and never fatal: on a server
+  // without attendance statistics the card is simply not shown.
+  AttendanceDay? _lastSession;
+  String? _lastSessionError;
+  bool _lastSessionUnavailable = false;
 
   @override
   void initState() {
@@ -60,8 +75,17 @@ class _InstructorDashboardScreenState extends State<InstructorDashboardScreen> {
     _instructorId = user.profile!.id;
     _instructorName = user.profile!.fullName ?? 'المعلم';
 
+    // Runs alongside the roster and never holds it up; it handles its own
+    // failures. Awaited at the end so pull-to-refresh waits for both.
+    final lastSession = _loadLastSession();
+
     try {
-      final overview = await _recitationApi.getInstructorOverview();
+      // Roster points and mosque rank are course-scoped: a new course opens
+      // with every student on 0 rather than carrying last term's totals.
+      final overview = await _recitationApi.getInstructorOverview(
+        termId: context.read<TermProvider>().viewedTermIdParam,
+      );
+      if (!mounted) return;
       setState(() {
         _students = overview;
         _recomputeCircleRanks();
@@ -69,10 +93,36 @@ class _InstructorDashboardScreenState extends State<InstructorDashboardScreen> {
         _isLoading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _error = e.toString();
         _isLoading = false;
       });
+    }
+    await lastSession;
+  }
+
+  Future<void> _loadLastSession() async {
+    if (_lastSessionUnavailable) return;
+    final termId = context.read<TermProvider>().viewedTermIdParam;
+    // Switched course: never leave the previous course's session on screen.
+    final shownCourse = _lastSession?.course?.id;
+    if (shownCourse != null && termId != null && shownCourse != termId) {
+      setState(() => _lastSession = null);
+    }
+    try {
+      final day = await _statsApi.getDay(termId: termId);
+      if (!mounted) return;
+      setState(() {
+        _lastSession = day;
+        _lastSessionError = null;
+      });
+    } on AttendanceStatsUnavailable {
+      if (!mounted) return;
+      setState(() => _lastSessionUnavailable = true);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _lastSessionError = e.toString());
     }
   }
 
@@ -150,23 +200,47 @@ class _InstructorDashboardScreenState extends State<InstructorDashboardScreen> {
         .inDays;
     if (days <= 0) return 'اليوم';
     if (days == 1) return 'أمس';
-    return 'منذ ' + days.toString() + ' يوم';
+    return 'منذ $days يوم';
   }
 
   void _navigateToStudentDetail(Map<String, dynamic> student) {
+    _openStudent(
+      student['studentId'] as String,
+      student['fullName'] as String? ?? 'طالب',
+    );
+  }
+
+  void _openStudent(String studentId, String studentName, {int initialTab = 0}) {
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => InstructorStudentDetailScreen(
-          studentId: student['studentId'] as String,
-          studentName: student['fullName'] as String? ?? 'طالب',
+          studentId: studentId,
+          studentName: studentName,
+          initialTab: initialTab,
         ),
       ),
     ).then((_) => _loadDashboard());
   }
 
-  void _navigateToAttendance() {
+  void _navigateToHalaqaStats() {
+    final termId = context.read<TermProvider>().viewedTermIdParam;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => HalaqaAttendanceScreen(termId: termId),
+      ),
+    );
+  }
+
+  /// Opens the sheet on [date], or — from the «الحضور» button — on the
+  /// course's last meeting day: today on a meeting day, otherwise e.g. the
+  /// Saturday before, so a late entry is never saved under the wrong day.
+  void _navigateToAttendance({String? date}) {
     if (_instructorId == null) return;
+    final active = context.read<TermProvider>().activeTerm;
+    final initialDate = date ??
+        (active == null ? null : isoDay(active.meetingDays.defaultAttendanceDay(DateTime.now())));
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -174,8 +248,33 @@ class _InstructorDashboardScreenState extends State<InstructorDashboardScreen> {
           create: (_) => AttendanceProvider(
             repository: AttendanceRepository(apiClient: ApiClient.instance),
             instructorId: _instructorId,
+            initialDate: initialDate,
           ),
           child: const AttendanceScreen(),
+        ),
+      ),
+    ).then((_) => _loadDashboard());
+  }
+
+  /// «حلقات أخرى» — recording for a حلقة that is not mine. Deliberately its
+  /// own entry, in its own colour: the mosque asked that covering for
+  /// another أستاذ never share a screen with recording my own حلقة.
+  ///
+  /// It opens on the same day my own sheet would open on (the course's last
+  /// meeting day), so a Saturday session recorded on Sunday is not saved
+  /// under Sunday for the حلقة I covered either.
+  void _navigateToOtherHalaqas() {
+    final terms = context.read<TermProvider>();
+    final active = terms.activeTerm;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => OtherHalaqasScreen(
+          myInstructorId: _instructorId,
+          date: active == null
+              ? null
+              : isoDay(active.meetingDays.defaultAttendanceDay(DateTime.now())),
+          termId: terms.viewedTermIdParam,
         ),
       ),
     ).then((_) => _loadDashboard());
@@ -228,6 +327,9 @@ class _InstructorDashboardScreenState extends State<InstructorDashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Browsing an archived course: nothing is recorded from the session card.
+    final viewingArchive =
+        context.select<TermProvider, bool>((t) => t.isViewingArchive);
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
@@ -284,6 +386,9 @@ class _InstructorDashboardScreenState extends State<InstructorDashboardScreen> {
                                 Row(
                                   mainAxisAlignment: MainAxisAlignment.end,
                                   children: [
+                                    TermSelectorAction(
+                                        onChanged: _loadDashboard),
+                                    const Spacer(),
                                     IconButton(
                                       onPressed: () {
                                         context.read<AuthProvider>().logout();
@@ -331,7 +436,7 @@ class _InstructorDashboardScreenState extends State<InstructorDashboardScreen> {
                                       icon: Icons.check_circle_outline,
                                       label: 'الحضور',
                                       color: TaqwaColors.islamicGreen,
-                                      onTap: _navigateToAttendance,
+                                      onTap: () => _navigateToAttendance(),
                                     ),
                                     const SizedBox(width: 10),
                                     _actionButton(
@@ -398,10 +503,51 @@ class _InstructorDashboardScreenState extends State<InstructorDashboardScreen> {
                                     ),
                                   ],
                                 ),
+                                // Covering for another أستاذ: never recorded
+                                // from the buttons above, and never while
+                                // browsing an archived course.
+                                if (!viewingArchive) ...[
+                                  const SizedBox(height: 8),
+                                  Row(
+                                    children: [
+                                      _actionButton(
+                                        icon: Icons.swap_horiz_rounded,
+                                        label: 'حلقات أخرى',
+                                        color: SubstituteColors.onDark,
+                                        onTap: _navigateToOtherHalaqas,
+                                      ),
+                                      const SizedBox(width: 10),
+                                      // Keeps the button one third wide, so
+                                      // it lines up with the rows above.
+                                      const Spacer(flex: 2),
+                                    ],
+                                  ),
+                                ],
                               ],
                             ),
                           ),
                         ),
+                        if (!_lastSessionUnavailable)
+                          SliverToBoxAdapter(
+                            child: LastSessionCard(
+                              day: _lastSession,
+                              instructorId: _instructorId,
+                              canRecord: !viewingArchive,
+                              onRecord: (date) =>
+                                  _navigateToAttendance(date: date),
+                              onOpenStudent: (r) => _openStudent(
+                                r.studentId,
+                                r.fullName,
+                                initialTab:
+                                    InstructorStudentDetailScreen.attendanceTab,
+                              ),
+                              onOpenStats: _navigateToHalaqaStats,
+                              error: _lastSession == null
+                                  ? _lastSessionError
+                                  : null,
+                              onRetry: _loadLastSession,
+                            ),
+                          ),
                         SliverToBoxAdapter(
                           child: Padding(
                             padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
@@ -421,8 +567,8 @@ class _InstructorDashboardScreenState extends State<InstructorDashboardScreen> {
                                   padding: const EdgeInsets.symmetric(
                                       horizontal: 8, vertical: 2),
                                   decoration: BoxDecoration(
-                                    color:
-                                        TaqwaColors.domeBlue.withOpacity(0.08),
+                                    color: TaqwaColors.domeBlue
+                                        .withValues(alpha: 0.08),
                                     borderRadius: BorderRadius.circular(6),
                                   ),
                                   child: Text(
@@ -546,7 +692,7 @@ class _InstructorDashboardScreenState extends State<InstructorDashboardScreen> {
   }) {
     return Expanded(
       child: Material(
-        color: Colors.white.withOpacity(0.12),
+        color: Colors.white.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(14),
         child: InkWell(
           borderRadius: BorderRadius.circular(14),
@@ -716,11 +862,11 @@ class _InstructorDashboardScreenState extends State<InstructorDashboardScreen> {
                       const SizedBox(height: 3),
                       Row(
                         children: [
-                          Icon(Icons.star_rounded,
+                          const Icon(Icons.star_rounded,
                               size: 12, color: TaqwaColors.minaretGold),
                           const SizedBox(width: 3),
                           Text(
-                            balance.toStringAsFixed(2) + ' نقطة',
+                            '${balance.toStringAsFixed(2)} نقطة',
                             textDirection: TextDirection.ltr,
                             style: const TextStyle(
                               fontFamily: 'Cairo',
@@ -738,7 +884,7 @@ class _InstructorDashboardScreenState extends State<InstructorDashboardScreen> {
                             ),
                             const SizedBox(width: 8),
                             Text(
-                              '#' + mosqueRank.toString() + ' في الجامع',
+                              '#$mosqueRank في الجامع',
                               style: TextStyle(
                                 fontFamily: 'Cairo',
                                 fontSize: 11,
@@ -816,7 +962,7 @@ class _InstructorDashboardScreenState extends State<InstructorDashboardScreen> {
                     padding: const EdgeInsets.symmetric(
                         horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
-                      color: ratingColor.withOpacity(0.1),
+                      color: ratingColor.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(

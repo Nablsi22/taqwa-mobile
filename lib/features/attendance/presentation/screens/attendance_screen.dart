@@ -1,18 +1,37 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../../core/theme/taqwa_colors.dart';
+import '../../../../core/utils/meeting_days.dart';
+import '../../../attendance_stats/presentation/attendance_ui.dart';
+import '../../../substitute/presentation/substitute_ui.dart';
 import '../../data/models/attendance_sheet_model.dart';
 import '../providers/attendance_provider.dart';
 
 class AttendanceScreen extends StatefulWidget {
-  const AttendanceScreen({super.key});
+  /// The same sheet for an instructor's own حلقة and for a حلقة he is
+  /// covering: one screen, because recording is the same act and must behave
+  /// identically. [substitute] only changes how it looks and what it is
+  /// called, so the two can never be confused — see [SubstituteMode].
+  ///
+  /// The provider decides whose sheet is loaded (its `instructorId`); this
+  /// is the matching name and colour.
+  const AttendanceScreen({super.key, this.substitute});
+
+  final SubstituteMode? substitute;
 
   @override
   State<AttendanceScreen> createState() => _AttendanceScreenState();
 }
 
 class _AttendanceScreenState extends State<AttendanceScreen> {
- @override
+  SubstituteMode? get _substitute => widget.substitute;
+  bool get _byProxy => _substitute != null;
+
+  /// Navy for your own حلقة, violet when recording for someone else.
+  Color get _accent =>
+      _byProxy ? SubstituteColors.header : TaqwaColors.domeBlue;
+
+  @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -22,7 +41,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       }
     });
   }
-  
+
   Future<void> _pickDate() async {
     final provider = context.read<AttendanceProvider>();
     final parts = provider.selectedDate.split('-');
@@ -43,9 +62,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     );
 
     if (picked != null) {
-      final formatted =
-          '${picked.year}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
-      provider.changeDate(formatted);
+      provider.changeDate(isoDay(picked));
     }
   }
 
@@ -55,16 +72,24 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     if (!mounted) return;
 
     if (success) {
+      // Absence is never recorded on its own, so say who is still open.
+      final left = provider.unmarkedCount;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('تم حفظ الحضور بنجاح'),
-          backgroundColor: Colors.green,
+        SnackBar(
+          content: Text(
+            left == 0 ? 'تم حفظ الحضور بنجاح' : 'تم الحفظ · بقي ${studentsAr(left)} بلا تسجيل',
+            style: const TextStyle(fontFamily: 'Cairo'),
+          ),
+          backgroundColor: left == 0 ? Colors.green : AttendanceColors.irregular,
         ),
       );
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(provider.error ?? 'حدث خطأ أثناء الحفظ'),
+          content: Text(
+            provider.error ?? 'حدث خطأ أثناء الحفظ',
+            style: const TextStyle(fontFamily: 'Cairo'),
+          ),
           backgroundColor: Colors.red,
         ),
       );
@@ -76,13 +101,14 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
-        backgroundColor: const Color(0xFFF5F6FA),
+        backgroundColor:
+            _byProxy ? SubstituteColors.surface : const Color(0xFFF5F6FA),
         appBar: AppBar(
-          title: const Text(
-            'تسجيل الحضور',
-            style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold),
+          title: Text(
+            _byProxy ? 'حضور حلقة أ. ${_substitute!.instructorName}' : 'تسجيل الحضور',
+            style: const TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold),
           ),
-          backgroundColor: TaqwaColors.domeBlue,
+          backgroundColor: _accent,
           foregroundColor: Colors.white,
           elevation: 0,
           actions: [
@@ -114,79 +140,93 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
           children: [
             // Date picker + Quick actions bar
             Container(
-              color: TaqwaColors.domeBlue,
+              color: _accent,
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-              child: Column(
-                children: [
-                  // Date selector
-                  Consumer<AttendanceProvider>(
-                    builder: (context, provider, _) {
-                      return GestureDetector(
+              child: Consumer<AttendanceProvider>(
+                builder: (context, provider, _) {
+                  final note = dayKindNote(provider.dayKind);
+                  final sheet = provider.sheet;
+                  final unmarked = provider.unmarkedCount;
+                  final noneMarked = sheet != null && unmarked == sheet.students.length;
+                  return Column(
+                    children: [
+                      // Whose حلقة this is — said before the date, because it
+                      // changes what every tap below means.
+                      if (_byProxy) ...[
+                        SubstituteBanner(
+                          instructorName: _substitute!.instructorName,
+                          subtitle: 'الطلاب يبقون في حلقتهم · يُحفظ باسمك كمسجِّل',
+                        ),
+                        const SizedBox(height: 12),
+                      ],
+                      // Date selector
+                      GestureDetector(
                         onTap: _pickDate,
                         child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 12),
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                           decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.15),
+                            color: Colors.white.withValues(alpha: 0.15),
                             borderRadius: BorderRadius.circular(12),
                           ),
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              const Icon(Icons.calendar_today,
-                                  color: Colors.white, size: 18),
+                              const Icon(Icons.calendar_today, color: Colors.white, size: 18),
                               const SizedBox(width: 10),
-                              Text(
-                                _formatDateArabic(provider.selectedDate),
-                                style: const TextStyle(
-                                  fontFamily: 'Cairo',
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.white,
+                              Flexible(
+                                child: Text(
+                                  _formatDateArabic(provider.selectedDate),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontFamily: 'Cairo',
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.white,
+                                  ),
                                 ),
                               ),
                               const SizedBox(width: 8),
-                              Icon(Icons.arrow_drop_down,
-                                  color: Colors.white.withOpacity(0.7)),
+                              Icon(Icons.arrow_drop_down, color: Colors.white.withValues(alpha: 0.7)),
                             ],
                           ),
                         ),
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  // Quick mark all buttons
-                  Row(
-                    children: [
-                      _QuickButton(
-                        label: 'الكل حاضر',
-                        color: Colors.green,
-                        icon: Icons.check_circle,
-                        onTap: () => context
-                            .read<AttendanceProvider>()
-                            .markAll('PRESENT'),
                       ),
-                      const SizedBox(width: 8),
-                      _QuickButton(
-                        label: 'الكل متأخر',
-                        color: Colors.orange,
-                        icon: Icons.access_time,
-                        onTap: () => context
-                            .read<AttendanceProvider>()
-                            .markAll('LATE'),
-                      ),
-                      const SizedBox(width: 8),
-                      _QuickButton(
-                        label: 'الكل غائب',
-                        color: Colors.red,
-                        icon: Icons.cancel,
-                        onTap: () => context
-                            .read<AttendanceProvider>()
-                            .markAll('ABSENT'),
+                      if (note != null) ...[
+                        const SizedBox(height: 10),
+                        _DayKindBanner(text: note),
+                      ],
+                      const SizedBox(height: 12),
+                      // Quick mark buttons
+                      Row(
+                        children: [
+                          _QuickButton(
+                            label: 'الكل حاضر',
+                            color: Colors.green,
+                            icon: Icons.check_circle,
+                            onTap: () => provider.markAll('PRESENT'),
+                          ),
+                          const SizedBox(width: 8),
+                          _QuickButton(
+                            label: 'الكل متأخر',
+                            color: Colors.orange,
+                            icon: Icons.access_time,
+                            onTap: () => provider.markAll('LATE'),
+                          ),
+                          const SizedBox(width: 8),
+                          // Only fills students nobody has marked yet, so the
+                          // ones already tapped keep their status.
+                          _QuickButton(
+                            label: noneMarked ? 'الكل غائب' : 'الباقي غائب',
+                            color: Colors.red,
+                            icon: Icons.cancel,
+                            onTap: unmarked == 0 ? null : () => provider.markRemaining('ABSENT'),
+                          ),
+                        ],
                       ),
                     ],
-                  ),
-                ],
+                  );
+                },
               ),
             ),
 
@@ -203,9 +243,8 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
               child: Consumer<AttendanceProvider>(
                 builder: (context, provider, _) {
                   if (provider.isLoading) {
-                    return const Center(
-                      child: CircularProgressIndicator(
-                          color: TaqwaColors.domeBlue),
+                    return Center(
+                      child: CircularProgressIndicator(color: _accent),
                     );
                   }
 
@@ -214,23 +253,20 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.error_outline,
-                              size: 64, color: Colors.red.shade300),
+                          Icon(Icons.error_outline, size: 64, color: Colors.red.shade300),
                           const SizedBox(height: 16),
                           Text(
                             provider.error!,
-                            style: const TextStyle(
-                                fontFamily: 'Cairo', fontSize: 16),
+                            style: const TextStyle(fontFamily: 'Cairo', fontSize: 16),
                             textAlign: TextAlign.center,
                           ),
                           const SizedBox(height: 16),
                           ElevatedButton.icon(
                             onPressed: () => provider.loadSheet(),
                             icon: const Icon(Icons.refresh),
-                            label: const Text('إعادة المحاولة',
-                                style: TextStyle(fontFamily: 'Cairo')),
+                            label: const Text('إعادة المحاولة', style: TextStyle(fontFamily: 'Cairo')),
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: TaqwaColors.domeBlue,
+                              backgroundColor: _accent,
                               foregroundColor: Colors.white,
                             ),
                           ),
@@ -239,17 +275,17 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                     );
                   }
 
-                  if (provider.sheet == null ||
-                      provider.sheet!.students.isEmpty) {
+                  if (provider.sheet == null || provider.sheet!.students.isEmpty) {
                     return Center(
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.people_outline,
-                              size: 80, color: Colors.grey.shade400),
+                          Icon(Icons.people_outline, size: 80, color: Colors.grey.shade400),
                           const SizedBox(height: 16),
                           Text(
-                            'لا يوجد طلاب لهذا التاريخ',
+                            _byProxy
+                                ? 'لا يوجد طلاب في هذه الحلقة'
+                                : 'لا يوجد طلاب لهذا التاريخ',
                             style: TextStyle(
                               fontFamily: 'Cairo',
                               fontSize: 18,
@@ -287,8 +323,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                   ? const SizedBox(
                       width: 20,
                       height: 20,
-                      child: CircularProgressIndicator(
-                          color: Colors.white, strokeWidth: 2),
+                      child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
                     )
                   : const Icon(Icons.save, color: Colors.white),
               label: Text(
@@ -308,7 +343,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
 
   Widget _buildStatsBar(AttendanceProvider provider) {
     final sheet = provider.sheet!;
-    int present = 0, late = 0, absent = 0, unmarked = 0;
+    int present = 0, lateCount = 0, absent = 0, excused = 0, unmarked = 0;
 
     for (final student in sheet.students) {
       final status = provider.getStatus(student.studentId);
@@ -317,10 +352,13 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
           present++;
           break;
         case 'LATE':
-          late++;
+          lateCount++;
           break;
         case 'ABSENT':
           absent++;
+          break;
+        case 'EXCUSED':
+          excused++;
           break;
         default:
           unmarked++;
@@ -333,14 +371,12 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
-          _StatChip(
-              label: 'حاضر', count: present, color: Colors.green),
-          _StatChip(
-              label: 'متأخر', count: late, color: Colors.orange),
-          _StatChip(
-              label: 'غائب', count: absent, color: Colors.red),
-          _StatChip(
-              label: 'غير محدد', count: unmarked, color: Colors.grey),
+          _StatChip(label: 'حاضر', count: present, color: Colors.green),
+          _StatChip(label: 'متأخر', count: lateCount, color: Colors.orange),
+          _StatChip(label: 'غائب', count: absent, color: Colors.red),
+          if (provider.supportsExcused)
+            _StatChip(label: 'بعذر', count: excused, color: AttendanceColors.excused),
+          _StatChip(label: 'غير محدد', count: unmarked, color: Colors.grey),
         ],
       ),
     );
@@ -351,6 +387,22 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     String? currentStatus,
     AttendanceProvider provider,
   ) {
+    // Four buttons need a little less room each to leave the name space.
+    final withExcused = provider.supportsExcused;
+    final double buttonSize = withExcused ? 34 : 36;
+    final double gap = withExcused ? 5 : 6;
+
+    Widget button(String status, IconData icon) {
+      return _StatusButton(
+        icon: icon,
+        color: _statusColor(status),
+        isActive: currentStatus == status,
+        size: buttonSize,
+        onTap: () => _handleStatusTap(student, status, currentStatus, provider),
+        tooltip: _statusLabel(status),
+      );
+    }
+
     return Card(
       margin: const EdgeInsets.only(bottom: 10),
       elevation: 2,
@@ -362,8 +414,8 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
           children: [
             // Avatar
             CircleAvatar(
-              radius: 22,
-              backgroundColor: _statusColor(currentStatus).withOpacity(0.15),
+              radius: withExcused ? 19 : 22,
+              backgroundColor: _statusColor(currentStatus).withValues(alpha: 0.15),
               child: Text(
                 student.fullName.isNotEmpty ? student.fullName[0] : '?',
                 style: TextStyle(
@@ -374,17 +426,20 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                 ),
               ),
             ),
-            const SizedBox(width: 12),
+            SizedBox(width: withExcused ? 10 : 12),
 
             // Name
             Expanded(
               child: Text(
                 student.fullName,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
                   fontFamily: 'Cairo',
                   fontSize: 15,
                   fontWeight: FontWeight.w600,
-                  color: Color(0xFF1A1A2E),
+                  height: 1.4,
+                  color: AttendanceColors.ink,
                 ),
               ),
             ),
@@ -393,32 +448,15 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                _StatusButton(
-                  icon: Icons.check_circle,
-                  color: Colors.green,
-                  isActive: currentStatus == 'PRESENT',
-                  onTap: () => _handleStatusTap(
-                      student, 'PRESENT', currentStatus, provider),
-                  tooltip: 'حاضر',
-                ),
-                const SizedBox(width: 6),
-                _StatusButton(
-                  icon: Icons.access_time,
-                  color: Colors.orange,
-                  isActive: currentStatus == 'LATE',
-                  onTap: () => _handleStatusTap(
-                      student, 'LATE', currentStatus, provider),
-                  tooltip: 'متأخر',
-                ),
-                const SizedBox(width: 6),
-                _StatusButton(
-                  icon: Icons.cancel,
-                  color: Colors.red,
-                  isActive: currentStatus == 'ABSENT',
-                  onTap: () => _handleStatusTap(
-                      student, 'ABSENT', currentStatus, provider),
-                  tooltip: 'غائب',
-                ),
+                button('PRESENT', Icons.check_circle),
+                SizedBox(width: gap),
+                button('LATE', Icons.access_time),
+                SizedBox(width: gap),
+                button('ABSENT', Icons.cancel),
+                if (withExcused) ...[
+                  SizedBox(width: gap),
+                  button('EXCUSED', Icons.event_busy_rounded),
+                ],
               ],
             ),
           ],
@@ -447,7 +485,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       return;
     }
 
-    final ok = await _confirmUnmark(student, tapped);
+    final ok = await _confirmUnmark(student, tapped, provider.dayKind);
     if (ok != true || !mounted) return;
 
     final done = await provider.unmarkSaved(student.studentId);
@@ -467,12 +505,12 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
   Future<bool?> _confirmUnmark(
     StudentAttendanceEntry student,
     String status,
+    DayKind? dayKind,
   ) {
     final color = _statusColor(status);
     final label = _statusLabel(status);
-    final points = _statusPoints(status);
-    final initial =
-        student.fullName.isNotEmpty ? student.fullName[0] : '?';
+    final points = _statusPoints(status, dayKind);
+    final initial = student.fullName.isNotEmpty ? student.fullName[0] : '?';
 
     return showDialog<bool>(
       context: context,
@@ -495,22 +533,23 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                     color: Colors.orange.withValues(alpha: 0.12),
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(Icons.backspace_outlined,
-                      size: 24, color: Colors.orange),
+                  child: const Icon(Icons.backspace_outlined, size: 24, color: Colors.orange),
                 ),
                 const SizedBox(height: 14),
-                Text(
+                const Text(
                   'إلغاء تحديد الحضور',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontFamily: 'Cairo',
                     fontSize: 17,
                     fontWeight: FontWeight.w600,
-                    color: Color(0xFF1A1A2E),
+                    color: AttendanceColors.ink,
                   ),
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'سيُحذف السجل والنقاط المرتبطة به، ويعود الطالب إلى حالة غير محدد',
+                  points == null
+                      ? 'سيُحذف السجل، ويعود الطالب إلى حالة غير محدد'
+                      : 'سيُحذف السجل والنقاط المرتبطة به، ويعود الطالب إلى حالة غير محدد',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontFamily: 'Cairo',
@@ -521,8 +560,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                 ),
                 const SizedBox(height: 18),
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 14, vertical: 12),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                   decoration: BoxDecoration(
                     color: const Color(0xFFF5F6FA),
                     borderRadius: BorderRadius.circular(12),
@@ -555,7 +593,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                                 fontFamily: 'Cairo',
                                 fontSize: 14,
                                 fontWeight: FontWeight.w600,
-                                color: Color(0xFF1A1A2E),
+                                color: AttendanceColors.ink,
                               ),
                             ),
                             const SizedBox(height: 2),
@@ -571,8 +609,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                         ),
                       ),
                       Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 5),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                         decoration: BoxDecoration(
                           color: color.withValues(alpha: 0.12),
                           borderRadius: BorderRadius.circular(20),
@@ -589,16 +626,18 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                                 color: color,
                               ),
                             ),
-                            const SizedBox(width: 6),
-                            Text(
-                              points,
-                              textDirection: TextDirection.ltr,
-                              style: TextStyle(
-                                fontFamily: 'Cairo',
-                                fontSize: 12.5,
-                                color: color.withValues(alpha: 0.75),
+                            if (points != null) ...[
+                              const SizedBox(width: 6),
+                              Text(
+                                points,
+                                textDirection: TextDirection.ltr,
+                                style: TextStyle(
+                                  fontFamily: 'Cairo',
+                                  fontSize: 12.5,
+                                  color: color.withValues(alpha: 0.75),
+                                ),
                               ),
-                            ),
+                            ],
                           ],
                         ),
                       ),
@@ -619,9 +658,9 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                         borderRadius: BorderRadius.circular(12),
                       ),
                     ),
-                    child: Text(
+                    child: const Text(
                       'إلغاء التحديد',
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: 'Cairo',
                         fontSize: 14.5,
                         fontWeight: FontWeight.w600,
@@ -653,25 +692,21 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     );
   }
 
-  String _statusLabel(String status) {
-    switch (status) {
-      case 'PRESENT':
-        return 'حاضر';
-      case 'LATE':
-        return 'متأخر';
-      default:
-        return 'غائب';
-    }
-  }
+  String _statusLabel(String status) => statusStyle(status).label;
 
-  String _statusPoints(String status) {
+  /// Points the saved record carries, or null when it carries none: an
+  /// excused absence, or a late / absent mark on a day that deducts nobody.
+  String? _statusPoints(String status, DayKind? dayKind) {
+    final rewardOnly = dayKind == DayKind.optional || dayKind == DayKind.extra;
     switch (status) {
       case 'PRESENT':
         return '+3';
       case 'LATE':
-        return '-2';
-      default:
-        return '-5';
+        return rewardOnly ? null : '-2';
+      case 'ABSENT':
+        return rewardOnly ? null : '-5';
+      default: // EXCUSED
+        return null;
     }
   }
 
@@ -683,25 +718,57 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
         return Colors.orange;
       case 'ABSENT':
         return Colors.red;
+      case 'EXCUSED':
+        return AttendanceColors.excused;
       default:
-        return TaqwaColors.domeBlue;
+        return _accent;
     }
   }
 
+  /// «السبت 17 أكتوبر 2026 · اليوم»
   String _formatDateArabic(String date) {
-    try {
-      final parts = date.split('-');
-      final months = [
-        '', 'يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
-        'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'
-      ];
-      final day = int.parse(parts[2]);
-      final month = months[int.parse(parts[1])];
-      final year = parts[0];
-      return '$day $month $year';
-    } catch (_) {
-      return date;
-    }
+    final d = parseIsoDay(date);
+    if (d == null) return date;
+    final label = '${kWeekdaysAr[d.weekday - 1]} ${d.day} ${kMonthsAr[d.month - 1]} ${d.year}';
+    return date == isoDay(DateTime.now()) ? '$label · اليوم' : label;
+  }
+}
+
+// ── Day-kind notice (optional / make-up day) ──
+class _DayKindBanner extends StatelessWidget {
+  final String text;
+
+  const _DayKindBanner({required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: TaqwaColors.minaretGold.withValues(alpha: 0.22),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: TaqwaColors.minaretGold.withValues(alpha: 0.45)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.star_rounded, size: 17, color: Colors.white),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              text,
+              style: const TextStyle(
+                fontFamily: 'Cairo',
+                fontSize: 12.5,
+                height: 1.5,
+                fontWeight: FontWeight.w600,
+                color: Colors.white,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -710,7 +777,7 @@ class _QuickButton extends StatelessWidget {
   final String label;
   final Color color;
   final IconData icon;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   const _QuickButton({
     required this.label,
@@ -721,30 +788,38 @@ class _QuickButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final enabled = onTap != null;
     return Expanded(
       child: GestureDetector(
         onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          decoration: BoxDecoration(
-            color: color.withOpacity(0.2),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, color: color, size: 16),
-              const SizedBox(width: 4),
-              Text(
-                label,
-                style: TextStyle(
-                  fontFamily: 'Cairo',
-                  fontSize: 11,
-                  fontWeight: FontWeight.bold,
-                  color: color,
+        child: Opacity(
+          opacity: enabled ? 1 : 0.45,
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.2),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, color: color, size: 16),
+                const SizedBox(width: 4),
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontFamily: 'Cairo',
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: color,
+                    ),
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -759,6 +834,7 @@ class _StatusButton extends StatelessWidget {
   final bool isActive;
   final VoidCallback onTap;
   final String tooltip;
+  final double size;
 
   const _StatusButton({
     required this.icon,
@@ -766,6 +842,7 @@ class _StatusButton extends StatelessWidget {
     required this.isActive,
     required this.onTap,
     required this.tooltip,
+    this.size = 36,
   });
 
   @override
@@ -775,18 +852,16 @@ class _StatusButton extends StatelessWidget {
       child: GestureDetector(
         onTap: onTap,
         child: Container(
-          width: 36,
-          height: 36,
+          width: size,
+          height: size,
           decoration: BoxDecoration(
-            color: isActive ? color.withOpacity(0.15) : Colors.grey.shade100,
+            color: isActive ? color.withValues(alpha: 0.15) : Colors.grey.shade100,
             borderRadius: BorderRadius.circular(10),
-            border: isActive
-                ? Border.all(color: color, width: 2)
-                : Border.all(color: Colors.grey.shade300),
+            border: isActive ? Border.all(color: color, width: 2) : Border.all(color: Colors.grey.shade300),
           ),
           child: Icon(
             icon,
-            size: 20,
+            size: size * 0.56,
             color: isActive ? color : Colors.grey.shade400,
           ),
         ),
