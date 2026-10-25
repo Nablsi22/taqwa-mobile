@@ -22,6 +22,11 @@ class AttendanceProvider extends ChangeNotifier {
   // Local state: tracks status changes before saving
   final Map<String, String> _localStatuses = {};
 
+  /// «طلابي اليوم» — when a substitute shares an absent teacher's حلقة with
+  /// others, the students sitting with him. The bulk actions and the
+  /// counters then cover only them. Null → every student of the sheet.
+  Set<String>? _scope;
+
   /// [initialDate] (YYYY-MM-DD) opens the sheet on a given day — the last
   /// meeting day, typically. Omitted → today, as before.
   AttendanceProvider({
@@ -40,17 +45,33 @@ class AttendanceProvider extends ChangeNotifier {
   String get selectedDate => _selectedDate;
   bool get hasUnsavedChanges => _localStatuses.isNotEmpty;
 
+  Set<String>? get scope => _scope;
+
+  /// The students the bulk actions and counters cover: [scope], or all.
+  List<StudentAttendanceEntry> get scopedStudents {
+    final s = _sheet;
+    if (s == null) return const [];
+    final scope = _scope;
+    if (scope == null) return s.students;
+    return s.students
+        .where((st) => scope.contains(st.studentId))
+        .toList(growable: false);
+  }
+
+  /// Null or empty → the whole sheet again. Unsaved choices are kept.
+  void setScope(Set<String>? studentIds) {
+    _scope = (studentIds == null || studentIds.isEmpty) ? null : {...studentIds};
+    notifyListeners();
+  }
+
   /// «غائب بعذر» is offered only when the server understands it.
   bool get supportsExcused => _sheet?.supportsExcused ?? false;
 
   DayKind? get dayKind => _sheet?.dayKind;
 
-  /// Students with no status at all, saved or pending.
-  int get unmarkedCount {
-    final s = _sheet;
-    if (s == null) return 0;
-    return s.students.where((st) => getStatus(st.studentId) == null).length;
-  }
+  /// Students with no status at all, saved or pending — within [scope].
+  int get unmarkedCount =>
+      scopedStudents.where((st) => getStatus(st.studentId) == null).length;
 
   StudentAttendanceEntry? _entry(String studentId) =>
       _sheet?.students.where((s) => s.studentId == studentId).firstOrNull;
@@ -131,7 +152,7 @@ class AttendanceProvider extends ChangeNotifier {
   // ── Mark All with a Status ────────────────────────────
   void markAll(String status) {
     if (_sheet == null) return;
-    for (final student in _sheet!.students) {
+    for (final student in scopedStudents) {
       _localStatuses[student.studentId] = status;
     }
     notifyListeners();
@@ -141,7 +162,7 @@ class AttendanceProvider extends ChangeNotifier {
   /// after tapping the ones who came. Nobody already marked is touched.
   void markRemaining(String status) {
     if (_sheet == null) return;
-    for (final student in _sheet!.students) {
+    for (final student in scopedStudents) {
       if (getStatus(student.studentId) == null) {
         _localStatuses[student.studentId] = status;
       }
@@ -160,9 +181,14 @@ class AttendanceProvider extends ChangeNotifier {
     try {
       final entries = <Map<String, dynamic>>[];
 
+      // Only what changed is sent. Re-sending a saved status would change
+      // nothing on the student, but the server stamps every row it receives
+      // with the sender as recorder — so a teacher fixing one name would
+      // take over marks a substitute (or an admin) made, and two substitutes
+      // sharing a حلقة would overwrite each other's names.
       for (final student in _sheet!.students) {
-        final status = _localStatuses[student.studentId] ?? student.effectiveStatus;
-        if (status == null) continue;
+        final status = _localStatuses[student.studentId];
+        if (status == null || status == student.effectiveStatus) continue;
 
         final entry = <String, dynamic>{
           'studentId': student.studentId,
@@ -179,6 +205,13 @@ class AttendanceProvider extends ChangeNotifier {
       }
 
       if (entries.isEmpty) {
+        // Every choice matches what is already saved: nothing to send.
+        if (_localStatuses.isNotEmpty) {
+          _localStatuses.clear();
+          _isSaving = false;
+          notifyListeners();
+          return true;
+        }
         _error = 'لم يتم تحديد حالة أي طالب';
         _isSaving = false;
         notifyListeners();

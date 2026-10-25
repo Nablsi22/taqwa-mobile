@@ -7,6 +7,7 @@ import '../../../instructor_home/presentation/screens/instructor_student_detail_
 import '../../data/supervisor_models.dart';
 import '../supervisor_navigation.dart';
 import '../supervisor_ui.dart';
+import '../help/supervisor_help.dart';
 
 /// One حلقة on one day: every student by name with his status, and who
 /// recorded it and when. Each name opens that student's page (read-only),
@@ -68,6 +69,7 @@ class SupervisorHalaqaScreen extends StatelessWidget {
           backgroundColor: TaqwaColors.domeBlue,
           foregroundColor: Colors.white,
           elevation: 0,
+          actions: const [HelpAppBarButton(HelpTopic.halaqaDay)],
         ),
         body: ListView(
           padding: const EdgeInsets.fromLTRB(14, 14, 14, 24),
@@ -127,7 +129,7 @@ class SupervisorHalaqaScreen extends StatelessWidget {
                     const SizedBox(height: 10),
                     const QuietNote(
                       icon: Icons.star_rounded,
-                      text: 'يوم اختياري: منعرض اللي حضروا بس.',
+                      text: 'يوم اختياري: نعرض من حضروا فقط.',
                     ),
                   ],
                 ],
@@ -139,7 +141,7 @@ class SupervisorHalaqaScreen extends StatelessWidget {
               child: shown.isEmpty
                   ? const Padding(
                       padding: EdgeInsets.symmetric(vertical: 14),
-                      child: QuietNote(text: 'ما حضر حدا'),
+                      child: QuietNote(text: 'لم يحضر أحد'),
                     )
                   : Column(
                       children: [
@@ -194,9 +196,9 @@ class _Person extends StatelessWidget {
       note = 'غاب ${consecutiveAr(streak)}';
       alarm = true;
     } else if (status == 'ABSENT' && absences > 1) {
-      note = 'غاب ${timesAr(absences)} بالدورة';
+      note = 'غاب ${timesAr(absences)} في الدورة';
     } else if (status == 'EXCUSED') {
-      note = 'بعذر · ما ينخصم منه';
+      note = 'بعذر · لا يُخصم منه';
     }
     final sub = [?father, ?note].join(' · ');
 
@@ -251,7 +253,7 @@ class _Person extends StatelessWidget {
             ),
             StatusPill(status, dense: true),
             const SizedBox(width: 4),
-            Icon(Icons.chevron_left_rounded, size: 18, color: Colors.grey.shade400),
+            Icon(Icons.chevron_right_rounded, size: 18, color: Colors.grey.shade400),
           ],
         ),
       ),

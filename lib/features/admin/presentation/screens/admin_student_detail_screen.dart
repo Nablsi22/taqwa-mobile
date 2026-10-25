@@ -5,6 +5,9 @@ import '../../../../core/network/api_client.dart';
 import '../../../../core/extensions/points_formatting.dart';
 import '../../../terms/presentation/providers/term_provider.dart';
 import '../../../terms/presentation/widgets/term_selector.dart';
+import '../../../recitation/data/recitation_api.dart';
+import '../../../recitation/data/recitation_timeline.dart';
+import '../../../recitation/presentation/widgets/course_section_header.dart';
 
 class AdminStudentDetailScreen extends StatefulWidget {
   final String studentId;
@@ -28,7 +31,11 @@ class _AdminStudentDetailScreenState extends State<AdminStudentDetailScreen>
   Map<String, dynamic> _studentInfo = {};
   Map<String, dynamic> _stats = {};
   List<Map<String, dynamic>> _pointsLog = [];
+  /// Every Quran recitation of the student, all courses, current first.
   List<Map<String, dynamic>> _recitations = [];
+
+  /// The same recitations split by course for the «التسميع» tab.
+  List<CourseSection> _recitationSections = const [];
   List<Map<String, dynamic>> _attendance = [];
   Map<String, dynamic> _attendanceSummary = {};
 
@@ -142,19 +149,17 @@ class _AdminStudentDetailScreenState extends State<AdminStudentDetailScreen>
     }
   }
 
+  /// Every course, current first — the tab marks where each course begins.
+  /// It does not follow the course selector: a student's recitation record
+  /// is read as a whole.
   Future<void> _loadRecitations() async {
     try {
-      final res = await ApiClient.instance.get(
-        '/recitations/student/${widget.studentId}/history',
-        queryParameters: _termQuery,
+      final timeline = await RecitationApi(ApiClient.instance).getStudentTimeline(
+        widget.studentId,
+        courses: mounted ? context.read<TermProvider>().terms : null,
       );
-      final data = res.data;
-      if (data is Map) {
-        final list = data['data'] as List? ?? [];
-        _recitations = list.map((e) => Map<String, dynamic>.from(e)).toList();
-      } else if (data is List) {
-        _recitations = data.map((e) => Map<String, dynamic>.from(e)).toList();
-      }
+      _recitationSections = timeline.sections;
+      _recitations = timeline.allRecitations;
     } catch (e) {
       debugPrint('Recitations error: $e');
     }
@@ -213,7 +218,7 @@ class _AdminStudentDetailScreenState extends State<AdminStudentDetailScreen>
     }
   }
 
-  Future<void> _deleteRecitation(String recitationId, int index) async {
+  Future<void> _deleteRecitation(String recitationId) async {
     final confirmed = await _showDeleteConfirmation(
       'حذف سجل التسميع',
       'هل أنت متأكد من حذف هذا التسميع؟ لن يتم التراجع عن هذا الإجراء.',
@@ -222,7 +227,13 @@ class _AdminStudentDetailScreenState extends State<AdminStudentDetailScreen>
 
     try {
       await ApiClient.instance.delete('/recitations/$recitationId');
-      setState(() => _recitations.removeAt(index));
+      bool sameRow(Map<String, dynamic> r) => r['id']?.toString() == recitationId;
+      setState(() {
+        _recitations.removeWhere(sameRow);
+        for (final section in _recitationSections) {
+          section.recitations.removeWhere(sameRow);
+        }
+      });
       await _loadStats();
       if (mounted) setState(() {});
       _showSuccessMessage('تم حذف سجل التسميع بنجاح');
@@ -480,7 +491,7 @@ class _AdminStudentDetailScreenState extends State<AdminStudentDetailScreen>
           children: [
             CircularProgressIndicator(color: TaqwaColors.minaretGold),
             SizedBox(height: 16),
-            Text('جارِ تحميل بيانات الطالب...',
+            Text('جارٍ تحميل بيانات الطالب...',
                 style: TextStyle(
                     fontFamily: 'Cairo',
                     color: Colors.white70,
@@ -962,6 +973,19 @@ class _AdminStudentDetailScreenState extends State<AdminStudentDetailScreen>
       );
     }
 
+    // A course band (CourseSection), then that course's recitations (Map);
+    // `null` marks a current course with nothing recorded yet.
+    final rows = <Object?>[];
+    for (final section in _recitationSections) {
+      if (section.recitations.isEmpty && !section.isCurrent) continue;
+      rows.add(section);
+      if (section.recitations.isEmpty) {
+        rows.add(null);
+      } else {
+        rows.addAll(section.recitations);
+      }
+    }
+
     return Column(
       children: [
         Container(
@@ -982,9 +1006,18 @@ class _AdminStudentDetailScreenState extends State<AdminStudentDetailScreen>
         Expanded(
           child: ListView.builder(
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
-            itemCount: _recitations.length,
+            itemCount: rows.length,
             itemBuilder: (context, index) {
-              final r = _recitations[index];
+              final row = rows[index];
+              if (row is CourseSection) {
+                return CourseSectionHeader(
+                  section: row,
+                  isFirst: index == 0,
+                  count: row.recitations.length,
+                );
+              }
+              if (row == null) return const EmptyCourseNote();
+              final r = row as Map<String, dynamic>;
               final recitationId = r['id']?.toString() ?? '';
               final suraName =
                   r['suraName'] ?? 'سورة ${r['surahNumber'] ?? ''}';
@@ -1005,7 +1038,7 @@ class _AdminStudentDetailScreenState extends State<AdminStudentDetailScreen>
                 direction: DismissDirection.endToStart,
                 confirmDismiss: (_) async {
                   if (recitationId.isEmpty) return false;
-                  await _deleteRecitation(recitationId, index);
+                  await _deleteRecitation(recitationId);
                   return false;
                 },
                 background: Container(
@@ -1154,7 +1187,7 @@ class _AdminStudentDetailScreenState extends State<AdminStudentDetailScreen>
                             InkWell(
                               onTap: recitationId.isNotEmpty
                                   ? () =>
-                                      _deleteRecitation(recitationId, index)
+                                      _deleteRecitation(recitationId)
                                   : null,
                               borderRadius: BorderRadius.circular(8),
                               child: Padding(

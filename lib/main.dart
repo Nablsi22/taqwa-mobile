@@ -5,6 +5,7 @@ import 'core/theme/taqwa_colors.dart';
 import 'core/theme/taqwa_theme.dart';
 import 'core/network/api_client.dart';
 import 'core/storage/secure_storage_service.dart';
+import 'core/widgets/system_nav_guard.dart';
 import 'features/auth/data/repositories/auth_repository.dart';
 import 'features/auth/presentation/providers/auth_provider.dart';
 import 'features/terms/presentation/providers/term_provider.dart';
@@ -131,6 +132,10 @@ class _TaqwaAppState extends State<TaqwaApp> {
       scaffoldMessengerKey: NotificationService.scaffoldKey,
       title: 'التقوى',
       debugShowCheckedModeBanner: false,
+      // Lifts every screen, dialog and bottom sheet above the phone's own
+      // navigation bar (Android 15+ draws apps edge to edge).
+      builder: (context, child) =>
+          SystemNavGuard(child: child ?? const SizedBox.shrink()),
       theme: TaqwaTheme.light,
       locale: const Locale('ar'),
       localizationsDelegates: const [
@@ -236,6 +241,9 @@ class _SplashScreenState extends State<_SplashScreen>
       duration: const Duration(milliseconds: 2000),
     )..repeat(reverse: true);
 
+    // The splash is dark: paint the strip behind the navigation bar to match.
+    SystemNavGuard.useDark();
+
     _mosqueController.forward();
     Future.delayed(const Duration(milliseconds: 800), () {
       if (mounted) _textController.forward();
@@ -244,6 +252,7 @@ class _SplashScreenState extends State<_SplashScreen>
 
   @override
   void dispose() {
+    SystemNavGuard.release();
     _mosqueController.dispose();
     _textController.dispose();
     _shimmerController.dispose();
@@ -423,7 +432,7 @@ class _SplashScreenState extends State<_SplashScreen>
                       ),
                       const SizedBox(height: 12),
                       Text(
-                        'جارِ التحميل...',
+                        'جارٍ التحميل...',
                         style: TextStyle(
                           fontFamily: 'Cairo',
                           fontSize: 12,

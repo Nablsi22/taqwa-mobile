@@ -433,7 +433,8 @@ class _StudentAttendanceViewState extends State<StudentAttendanceView>
               IconButton(
                 tooltip: 'الشهر السابق',
                 onPressed: _calendarLoading ? null : () => _goMonth(-1),
-                icon: const Icon(Icons.chevron_right_rounded),
+                // Icons mirror in RTL: chevron_left is drawn pointing right.
+                icon: const Icon(Icons.chevron_left_rounded),
                 color: TaqwaColors.domeBlue,
               ),
               Expanded(
@@ -451,7 +452,7 @@ class _StudentAttendanceViewState extends State<StudentAttendanceView>
               IconButton(
                 tooltip: 'الشهر التالي',
                 onPressed: _calendarLoading || isCurrentMonth ? null : () => _goMonth(1),
-                icon: const Icon(Icons.chevron_left_rounded),
+                icon: const Icon(Icons.chevron_right_rounded),
                 color: TaqwaColors.domeBlue,
               ),
             ],

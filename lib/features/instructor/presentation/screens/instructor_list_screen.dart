@@ -63,7 +63,7 @@ class _InstructorListScreenState extends State<InstructorListScreen> {
         child: AlertDialog(
           title: const Text('تأكيد الحذف'),
           content: Text(
-            'هل أنت متأكد من حذف المعلم "${instructor.fullName}"?\n'
+            'هل أنت متأكد من حذف المعلم "${instructor.fullName}"؟\n'
             'لا يمكن حذف معلم لديه طلاب مسجلين.',
           ),
           actions: [
@@ -158,7 +158,7 @@ class _InstructorListScreenState extends State<InstructorListScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('تم إعادة تعيين كلمة المرور بنجاح'),
+          content: Text('تمت إعادة تعيين كلمة المرور بنجاح'),
           backgroundColor: Colors.green,
         ),
       );
@@ -339,7 +339,7 @@ class _InstructorListScreenState extends State<InstructorListScreen> {
           Text(
             _searchController.text.isNotEmpty
                 ? 'لا توجد نتائج للبحث'
-                : 'لا يوجد معلمين مسجلين',
+                : 'لا يوجد معلمون مسجّلون',
             style: TextStyle(
               fontFamily: 'Cairo',
               fontSize: 18,

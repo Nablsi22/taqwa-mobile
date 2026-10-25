@@ -6,6 +6,8 @@ import '../../../../core/widgets/points_display.dart';
 import '../../../../core/extensions/points_formatting.dart';
 import '../../../points/data/points_api.dart';
 import '../../../recitation/data/recitation_api.dart';
+import '../../../recitation/data/recitation_timeline.dart';
+import '../../../recitation/presentation/widgets/course_section_header.dart';
 import '../../../terms/presentation/providers/term_provider.dart';
 import '../../../terms/presentation/widgets/term_selector.dart';
 import '../../../attendance_stats/presentation/widgets/student_attendance_view.dart';
@@ -29,12 +31,17 @@ class InstructorStudentDetailScreen extends StatefulWidget {
   /// change — no «تسميع جديد», no «إضافة نقاط».
   final bool readOnly;
 
+  /// Adds a «؟» to the app bar that explains this page — the course
+  /// director's screens pass their plain-language help here.
+  final VoidCallback? onHelp;
+
   const InstructorStudentDetailScreen({
     super.key,
     required this.studentId,
     required this.studentName,
     this.initialTab = 0,
     this.readOnly = false,
+    this.onHelp,
   });
 
   @override
@@ -54,9 +61,9 @@ class _InstructorStudentDetailScreenState
 
   Map<String, dynamic> _studentInfo = {};
   List<Map<String, dynamic>> _pointsLog = [];
-  List<Map<String, dynamic>> _recitationHistory = [];
+  /// Every course's recitations, the current course first.
+  StudentRecitationTimeline _timeline = StudentRecitationTimeline.empty;
   Map<String, dynamic>? _lastRecitation; // D2
-  List<Map<String, dynamic>> _hadithEntries = [];
   Map<String, dynamic> _progress = {};
   Map<String, dynamic> _homework = {};
   double _totalPoints = 0;
@@ -89,10 +96,11 @@ class _InstructorStudentDetailScreenState
     super.dispose();
   }
 
-  /// Course whose figures this screen shows. Points, the recitation timeline
-  /// and the mosque rank are all read for this one course; the memorisation
-  /// map and the Nawawi progress are deliberately cumulative, because what a
-  /// student has memorised does not reset when a course ends.
+  /// Course whose figures this screen shows. Points and the mosque rank are
+  /// read for this one course. The recitation tab, the memorisation map and
+  /// the Nawawi progress span every course, because what a student has
+  /// recited and memorised does not reset when a course ends; the recitation
+  /// tab marks where each course begins.
   int? get _termId =>
       mounted ? context.read<TermProvider>().viewedTermIdParam : null;
 
@@ -147,15 +155,16 @@ class _InstructorStudentDetailScreenState
     }
   }
 
-  // D2 — single round-trip envelope: history list + last-session detail
+  // Every course, current first. Course names come from the course list
+  // when this account may read it (admin, teachers); otherwise each earlier
+  // course is captioned with its dates.
   Future<void> _loadRecitationHistory() async {
-    final envelope = await _recitationApi.getStudentHistoryWithSession(
+    final timeline = await _recitationApi.getStudentTimeline(
       widget.studentId,
-      termId: _termId,
+      courses: mounted ? context.read<TermProvider>().terms : null,
     );
-    _recitationHistory = envelope.history;
-    _lastRecitation = envelope.lastRecitation;
-    _hadithEntries = envelope.hadithEntries;
+    _timeline = timeline;
+    _lastRecitation = timeline.lastRecitation;
   }
 
   Future<void> _loadProgress() async {
@@ -423,7 +432,15 @@ class _InstructorStudentDetailScreenState
       pinned: true,
       backgroundColor: TaqwaColors.domeBlue,
       foregroundColor: Colors.white,
-      actions: [TermSelectorAction(onChanged: _loadData)],
+      actions: [
+        TermSelectorAction(onChanged: _loadData),
+        if (widget.onHelp != null)
+          IconButton(
+            tooltip: 'شرح هذه الصفحة',
+            icon: const Icon(Icons.help_outline_rounded),
+            onPressed: widget.onHelp,
+          ),
+      ],
       flexibleSpace: FlexibleSpaceBar(
         background: Container(
           decoration: const BoxDecoration(
@@ -1137,16 +1154,37 @@ class _InstructorStudentDetailScreenState
   double _pointsOf(Map<String, dynamic> e) =>
       (e['pointsAwarded'] as num?)?.toDouble() ?? 0;
 
-  // Groups both sources by day, then flattens into render rows so the
-  // list stays a single ListView.builder rather than nested scrollables.
+  // One band per course (current first), then that course's entries grouped
+  // by day. Flattened into render rows so the list stays a single
+  // ListView.builder rather than nested scrollables.
   List<_TimelineRow> _buildTimelineRows() {
+    final rows = <_TimelineRow>[];
+    if (_timeline.isEmpty) return rows;
+    for (final section in _timeline.sections) {
+      // An earlier course with nothing in it is not worth a band.
+      if (section.isEmpty && !section.isCurrent) continue;
+      rows.add(_TimelineRow.course(section));
+      if (section.isEmpty) {
+        rows.add(const _TimelineRow._(type: 'emptyCourse'));
+        continue;
+      }
+      rows.addAll(_dayRows(section.recitations, section.hadith));
+    }
+    return rows;
+  }
+
+  // Groups one course's Quran and hadith entries by day, newest day first.
+  List<_TimelineRow> _dayRows(
+    List<Map<String, dynamic>> recitations,
+    List<Map<String, dynamic>> hadith,
+  ) {
     final byDay = <String, List<_TimelineEntry>>{};
 
-    for (final rec in _recitationHistory) {
+    for (final rec in recitations) {
       final key = _dayKeyOf(rec['date'] ?? rec['createdAt']);
       (byDay[key] ??= []).add(_TimelineEntry(isHadith: false, data: rec));
     }
-    for (final h in _hadithEntries) {
+    for (final h in hadith) {
       final key = _dayKeyOf(h['createdAt']);
       (byDay[key] ??= []).add(_TimelineEntry(isHadith: true, data: h));
     }
@@ -1202,6 +1240,10 @@ class _InstructorStudentDetailScreenState
       itemCount: rows.length,
       itemBuilder: (context, index) {
         final row = rows[index];
+        if (row.type == 'course') {
+          return CourseSectionHeader(section: row.section!, isFirst: index == 0);
+        }
+        if (row.type == 'emptyCourse') return const EmptyCourseNote();
         if (row.type == 'day') return _buildDayHeader(row);
         if (row.type == 'homework') return _buildHomeworkNote(row.homework!);
         return row.entry!.isHadith
@@ -1882,6 +1924,7 @@ class _TimelineRow {
   final double points;
   final _TimelineEntry? entry;
   final String? homework;
+  final CourseSection? section;
 
   const _TimelineRow._({
     required this.type,
@@ -1891,7 +1934,11 @@ class _TimelineRow {
     this.points = 0,
     this.entry,
     this.homework,
+    this.section,
   });
+
+  factory _TimelineRow.course(CourseSection section) =>
+      _TimelineRow._(type: 'course', section: section);
 
   factory _TimelineRow.day(
     String key,

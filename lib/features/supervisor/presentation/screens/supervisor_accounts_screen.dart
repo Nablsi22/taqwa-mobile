@@ -78,7 +78,7 @@ class _SupervisorAccountsScreenState extends State<SupervisorAccountsScreen> {
     try {
       await _api.createAccount(username: result.username, password: result.password);
       if (!mounted) return;
-      _toast('انعمل الحساب «${result.username}» — بيدخل فيه المدير من شاشة الدخول');
+      _toast('تم إنشاء الحساب «${result.username}»، ويمكن للمدير الدخول به من شاشة تسجيل الدخول');
       _load();
     } catch (e) {
       if (!mounted) return;
@@ -95,7 +95,7 @@ class _SupervisorAccountsScreenState extends State<SupervisorAccountsScreen> {
     try {
       await _api.setPassword(a.id, result.password);
       if (!mounted) return;
-      _toast('تغيّرت كلمة المرور');
+      _toast('تم تغيير كلمة المرور');
     } catch (e) {
       if (!mounted) return;
       _toast(e.toString(), ok: false);
@@ -106,7 +106,7 @@ class _SupervisorAccountsScreenState extends State<SupervisorAccountsScreen> {
     try {
       await _api.setActive(a.id, !a.isActive);
       if (!mounted) return;
-      _toast(a.isActive ? 'توقف الحساب — ما بيقدر يدخل' : 'رجع الحساب يشتغل');
+      _toast(a.isActive ? 'تم إيقاف الحساب، ولن يتمكن من الدخول' : 'تمت إعادة تفعيل الحساب');
       _load();
     } catch (e) {
       if (!mounted) return;
@@ -147,7 +147,7 @@ class _SupervisorAccountsScreenState extends State<SupervisorAccountsScreen> {
     if (_unavailable) {
       return const SupervisorState(
         icon: Icons.cloud_sync_outlined,
-        title: 'حساب مدير الدورة بيشتغل بعد تحديث الخادم',
+        title: 'يعمل حساب مدير الدورة بعد تحديث الخادم',
       );
     }
     if (_error != null && _accounts.isEmpty) {
@@ -159,13 +159,13 @@ class _SupervisorAccountsScreenState extends State<SupervisorAccountsScreen> {
         const SoftCard(
           child: QuietNote(
             icon: Icons.verified_user_outlined,
-            text: 'حساب مستقل: بيشوف كل شي (الأساتذة، الحضور، التسميع، النقاط) وما بيقدر يغيّر أي شي. '
-                'ما إله حلقة ولا بيطلع بقائمة الأساتذة.',
+            text: 'حساب مستقل: يطّلع على كل شيء (الأساتذة والحضور والتسميع والنقاط) دون أن يستطيع تعديل أي شيء. '
+                'ليست له حلقة، ولا يظهر في قائمة الأساتذة.',
           ),
         ),
         const SizedBox(height: 12),
         if (_accounts.isEmpty)
-          const SoftCard(child: QuietNote(text: 'ما في حساب لمدير الدورة لهلق — اضغط «إنشاء حساب»'))
+          const SoftCard(child: QuietNote(text: 'لا يوجد حساب لمدير الدورة حتى الآن — اضغط «إنشاء حساب»'))
         else
           for (final a in _accounts)
             Padding(
@@ -234,10 +234,10 @@ class _SupervisorAccountsScreenState extends State<SupervisorAccountsScreen> {
   }
 }
 
-/// «آخر دخول: السبت 24/10» in the phone's own time, or «ما دخل لهلق».
+/// «آخر دخول: السبت 24/10» in the phone's own time, or «لم يسجّل الدخول بعد».
 String _lastLogin(String? stamp) {
   final t = stamp == null ? null : DateTime.tryParse(stamp)?.toLocal();
-  if (t == null) return 'ما دخل لهلق';
+  if (t == null) return 'لم يسجّل الدخول بعد';
   return 'آخر دخول: ${dayLabel(isoDay(t))}';
 }
 
@@ -298,11 +298,11 @@ class _CredentialsDialogState extends State<_CredentialsDialog> {
                     controller: _username,
                     textDirection: TextDirection.ltr,
                     autocorrect: false,
-                    decoration: _decoration('اسم المستخدم (إنكليزي)'),
+                    decoration: _decoration('اسم المستخدم (بالإنجليزية)'),
                     validator: (v) {
                       final t = (v ?? '').trim();
                       if (t.length < 3) return '3 أحرف على الأقل';
-                      if (!RegExp(r'^[a-zA-Z0-9_]+$').hasMatch(t)) return 'أحرف إنكليزية وأرقام و _ فقط';
+                      if (!RegExp(r'^[a-zA-Z0-9_]+$').hasMatch(t)) return 'أحرف إنجليزية وأرقام و _ فقط';
                       return null;
                     },
                   ),

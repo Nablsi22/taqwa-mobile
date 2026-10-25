@@ -138,7 +138,7 @@ class _AwardPointsScreenState extends State<AwardPointsScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            result['message'] ?? 'تم إضافة النقاط بنجاح',
+            result['message'] ?? 'تمت إضافة النقاط بنجاح',
             style: const TextStyle(fontFamily: 'Cairo'),
           ),
           backgroundColor: Colors.green,

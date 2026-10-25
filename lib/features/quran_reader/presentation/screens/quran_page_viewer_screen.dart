@@ -403,7 +403,7 @@ class _MushafPage extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 14),
-                  Text('جارِ تحميل الصفحة ${_toArabicNum(pageNumber)}',
+                  Text('جارٍ تحميل الصفحة ${_toArabicNum(pageNumber)}',
                       style: const TextStyle(fontFamily: 'Cairo', fontSize: 14,
                           color: Color(0xFF1B4F72))),
                   const SizedBox(height: 4),

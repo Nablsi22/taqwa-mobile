@@ -4,6 +4,7 @@ import '../../../attendance_stats/presentation/attendance_ui.dart';
 import '../../data/supervisor_api.dart';
 import '../../data/supervisor_models.dart';
 import '../supervisor_ui.dart';
+import '../help/supervisor_help.dart';
 import 'supervisor_instructor_screen.dart';
 
 /// «الأساتذة» — the screen the director opens on.
@@ -93,7 +94,7 @@ class _SupervisorInstructorsTabState extends State<SupervisorInstructorsTab> {
       return const SupervisorState(
         icon: Icons.cloud_off_rounded,
         title: 'لوحة مدير الدورة تظهر بعد تحديث الخادم',
-        subtitle: 'التطبيق جاهز، والخادم لسا ما انحدّث.',
+        subtitle: 'التطبيق جاهز، ولم يُحدَّث الخادم بعد.',
       );
     }
     if (_error != null && _result == null) {
@@ -108,7 +109,7 @@ class _SupervisorInstructorsTabState extends State<SupervisorInstructorsTab> {
     if (r.instructors.isEmpty) {
       return SupervisorState(
         icon: Icons.groups_2_outlined,
-        title: r.days.isEmpty ? 'ما في جلسات إلزامية بالدورة لهلق' : 'ما في حلقات فيها طلاب',
+        title: r.days.isEmpty ? 'لا توجد جلسات إلزامية في الدورة حتى الآن' : 'لا توجد حلقات فيها طلاب',
         subtitle: r.course?.nameAr,
         onRetry: _load,
       );
@@ -123,15 +124,15 @@ class _SupervisorInstructorsTabState extends State<SupervisorInstructorsTab> {
       children: [
         _Header(result: r),
         if (bad.isNotEmpty) ...[
-          SectionTitle('محتاجين متابعة', color: DisciplineColors.missed, count: bad.length),
+          SectionTitle('يحتاجون إلى متابعة', color: DisciplineColors.missed, count: bad.length, help: HelpTopic.needFollowUp),
           for (final d in bad) _InstructorCard(d: d, onTap: () => _open(d)),
         ],
         if (slipping.isNotEmpty) ...[
-          SectionTitle('بيتأخروا أحياناً', color: DisciplineColors.dayLate, count: slipping.length),
+          SectionTitle('يتأخرون أحياناً', color: DisciplineColors.dayLate, count: slipping.length, help: HelpTopic.slipping),
           for (final d in slipping) _InstructorCard(d: d, onTap: () => _open(d)),
         ],
         if (good.isNotEmpty) ...[
-          SectionTitle('منضبطين', color: DisciplineColors.onTime, count: good.length),
+          SectionTitle('منضبطون', color: DisciplineColors.onTime, count: good.length, help: HelpTopic.disciplined),
           for (final d in good) _InstructorCard(d: d, onTap: () => _open(d)),
         ],
       ],
@@ -152,11 +153,17 @@ class _Header extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (result.course != null)
-            Text(
-              result.course!.nameAr,
-              style: TextStyle(fontFamily: 'Cairo', fontSize: 12, color: Colors.grey.shade600),
-            ),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  result.course?.nameAr ?? 'تسجيل الأساتذة للحضور',
+                  style: TextStyle(fontFamily: 'Cairo', fontSize: 12, color: Colors.grey.shade600),
+                ),
+              ),
+              const HelpChip(HelpTopic.instructors),
+            ],
+          ),
           const SizedBox(height: 4),
           if (last != null) ...[
             Row(
@@ -178,7 +185,7 @@ class _Header extends StatelessWidget {
                   child: Text(
                     s.notRecorded == 0
                         ? 'كل الحلقات سجّلت آخر جلسة (${dayLabel(last)})'
-                        : 'من ${s.halaqas} ما سجّلوا آخر جلسة (${dayLabel(last)})',
+                        : 'من ${s.halaqas} لم يسجّلوا آخر جلسة (${dayLabel(last)})',
                     style: const TextStyle(
                       fontFamily: 'Cairo',
                       fontSize: 13,
@@ -193,10 +200,10 @@ class _Header extends StatelessWidget {
             const SizedBox(height: 8),
             Text(
               [
-                if (s.sameDay > 0) '${s.sameDay} سجّلوا بنفس اليوم',
-                if (s.late > 0) '${s.late} سجّلوا متأخر',
+                if (s.sameDay > 0) '${s.sameDay} سجّلوا في اليوم نفسه',
+                if (s.late > 0) '${s.late} سجّلوا متأخرين',
                 if (s.covered > 0) '${s.covered} استلمها نائب',
-                if (s.neverRecorded > 0) '${s.neverRecorded} ما سجّلوا ولا جلسة من الأربعة',
+                if (s.neverRecorded > 0) '${s.neverRecorded} لم يسجّلوا أي جلسة من الجلسات الأربع',
               ].join(' · '),
               style: TextStyle(fontFamily: 'Cairo', fontSize: 12, color: Colors.grey.shade700, height: 1.7),
             ),
@@ -216,15 +223,15 @@ class _InstructorCard extends StatelessWidget {
   final VoidCallback onTap;
 
   String get _pill {
-    if (d.neverRecorded) return 'ولا جلسة';
-    if (d.missedCount == 0 && d.lateCount == 0) return '${d.recordedCount} من ${d.requiredCount} · بوقتها';
+    if (d.neverRecorded) return 'لم يسجّل أي جلسة';
+    if (d.missedCount == 0 && d.lateCount == 0) return '${d.recordedCount} من ${d.requiredCount} · في وقتها';
     return 'سجّل ${d.recordedCount} من ${d.requiredCount}';
   }
 
   String get _line {
     final last = d.lastRecorded;
     if (d.neverRecorded || last == null) {
-      return '${studentsAr(d.students)} · ما منعرف عنهم شي من الجلسات الأخيرة';
+      return '${studentsAr(d.students)} · لا تتوفر عنهم معلومات من الجلسات الأخيرة';
     }
     final when = recordedWhen(last.recordedAt, last.date);
     return 'آخر تسجيل: ${dayLabel(last.date)}${when.isEmpty ? '' : ' · سُجّلت $when'}';
@@ -265,7 +272,7 @@ class _InstructorCard extends StatelessWidget {
                     ),
                     TintPill(label: _pill, color: edge),
                     const SizedBox(width: 4),
-                    Icon(Icons.chevron_left_rounded, color: Colors.grey.shade400),
+                    Icon(Icons.chevron_right_rounded, color: Colors.grey.shade400),
                   ],
                 ),
                 const SizedBox(height: 11),
@@ -285,7 +292,7 @@ class _InstructorCard extends StatelessWidget {
                   Padding(
                     padding: const EdgeInsets.only(top: 4),
                     child: Text(
-                      'آخر جلسة استلمها أ. ${d.sessions.last.markedByName ?? 'نائب'} — ما بتنحسب عليه',
+                      'آخر جلسة استلمها أ. ${d.sessions.last.markedByName ?? 'نائب'} — لا تُحتسب عليه',
                       style: const TextStyle(
                         fontFamily: 'Cairo',
                         fontSize: 11.5,

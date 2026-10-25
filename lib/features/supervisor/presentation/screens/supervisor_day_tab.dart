@@ -5,6 +5,7 @@ import '../../../attendance_stats/presentation/attendance_ui.dart';
 import '../../data/supervisor_api.dart';
 import '../../data/supervisor_models.dart';
 import '../supervisor_ui.dart';
+import '../help/supervisor_help.dart';
 import 'supervisor_halaqa_screen.dart';
 
 /// «الجلسة» — one meeting day across every حلقة.
@@ -196,15 +197,16 @@ class _SupervisorDayTabState extends State<SupervisorDayTab> {
         _DaySummary(recorded: recorded, notRecorded: notRecorded, optional: optional),
         if (notRecorded.isNotEmpty) ...[
           SectionTitle(
-            optional ? 'ما سجّلت · يوم اختياري، ما بينحسب عليهم' : 'ما سجّلت',
+            optional ? 'لم تسجّل · يوم اختياري لا يُحتسب على أحد' : 'لم تسجّل',
             color: optional ? null : DisciplineColors.missed,
             count: notRecorded.length,
+            help: HelpTopic.dayNotRecorded,
           ),
           for (final h in notRecorded)
             _HalaqaCard(h: h, date: day.date!, kind: day.kind, optional: optional),
         ],
         if (recorded.isNotEmpty) ...[
-          SectionTitle('سجّلت', count: recorded.length),
+          SectionTitle('سجّلت', count: recorded.length, help: HelpTopic.dayRecorded),
           for (final h in recorded)
             _HalaqaCard(h: h, date: day.date!, kind: day.kind, optional: optional),
         ],
@@ -234,7 +236,7 @@ class _DayNav extends StatelessWidget {
   Widget build(BuildContext context) {
     final kindLabel = switch (kind) {
       DayKind.optional => 'يوم اختياري',
-      DayKind.extra => 'مو من أيام الدوام',
+      DayKind.extra => 'ليس من أيام الدوام',
       _ => 'يوم إلزامي',
     };
     return Container(
@@ -248,7 +250,8 @@ class _DayNav extends StatelessWidget {
           // RTL: the right arrow goes back in time, the left one forward.
           IconButton(
             onPressed: onPrev,
-            icon: const Icon(Icons.chevron_right_rounded),
+            // Icons mirror in RTL: chevron_left is drawn pointing right.
+            icon: const Icon(Icons.chevron_left_rounded),
             color: Colors.white,
             disabledColor: Colors.white24,
             tooltip: 'يوم الدوام السابق',
@@ -295,7 +298,7 @@ class _DayNav extends StatelessWidget {
           ),
           IconButton(
             onPressed: onNext,
-            icon: const Icon(Icons.chevron_left_rounded),
+            icon: const Icon(Icons.chevron_right_rounded),
             color: Colors.white,
             disabledColor: Colors.white24,
             tooltip: 'يوم الدوام التالي',
@@ -325,16 +328,23 @@ class _DaySummary extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            notRecorded.isEmpty
-                ? 'كل الحلقات سجّلت ($total)'
-                : '${recorded.length} حلقات سجّلت من $total',
-            style: const TextStyle(
-              fontFamily: 'Cairo',
-              fontSize: 14.5,
-              fontWeight: FontWeight.bold,
-              color: AttendanceColors.ink,
-            ),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  notRecorded.isEmpty
+                      ? 'سجّلت جميع الحلقات ($total)'
+                      : '${recorded.length} حلقات سجّلت من $total',
+                  style: const TextStyle(
+                    fontFamily: 'Cairo',
+                    fontSize: 14.5,
+                    fontWeight: FontWeight.bold,
+                    color: AttendanceColors.ink,
+                  ),
+                ),
+              ),
+              const HelpChip(HelpTopic.day),
+            ],
           ),
           const SizedBox(height: 4),
           Text.rich(
@@ -344,14 +354,14 @@ class _DaySummary extends StatelessWidget {
                   text: '$came',
                   style: const TextStyle(fontWeight: FontWeight.bold, color: AttendanceColors.present),
                 ),
-                TextSpan(text: ' حضروا من أصل ${studentsAr(allStudents)} بالدورة'),
+                TextSpan(text: ' حضروا من أصل ${studentsAr(allStudents)} في الدورة'),
               ],
             ),
             style: const TextStyle(fontFamily: 'Cairo', fontSize: 13, color: AttendanceColors.ink),
           ),
           if (notRecorded.isNotEmpty && !optional)
             Text(
-              '${studentsAr(waiting)} بلا تسجيل · الأرقام تحت للحلقات اللي سجّلت بس',
+              '${studentsAr(waiting)} بلا تسجيل · الأرقام أدناه للحلقات التي سجّلت فقط',
               style: TextStyle(fontFamily: 'Cairo', fontSize: 11.5, color: Colors.grey.shade600, height: 1.7),
             ),
           const SizedBox(height: 12),
@@ -370,7 +380,7 @@ class _DaySummary extends StatelessWidget {
             const SizedBox(height: 10),
             const QuietNote(
               icon: Icons.star_rounded,
-              text: 'يوم اختياري: ما في غياب بهاليوم، منعرض الحاضرين بس.',
+              text: 'يوم اختياري: لا غياب في هذا اليوم، ونعرض الحاضرين فقط.',
             ),
           ],
         ],
@@ -405,7 +415,7 @@ class _HalaqaCard extends StatelessWidget {
 
     final String when;
     if (!h.recorded) {
-      when = optional ? 'ما سجّل · يوم اختياري' : 'ما سجّل هالجلسة';
+      when = optional ? 'لم يسجّل · يوم اختياري' : 'لم يسجّل هذه الجلسة';
     } else if (h.byOther) {
       when = 'سجّلها أ. ${h.markedByName ?? 'نائب'} بالنيابة · ${recordedWhen(h.recordedAt, date)}';
     } else {
@@ -458,7 +468,7 @@ class _HalaqaCard extends StatelessWidget {
                         TintPill(label: 'غاب ${h.absent}', color: AttendanceColors.absent, dense: true),
                       ],
                       const SizedBox(width: 2),
-                      Icon(Icons.chevron_left_rounded, color: Colors.grey.shade400),
+                      Icon(Icons.chevron_right_rounded, color: Colors.grey.shade400),
                     ] else
                       TintPill(label: studentsAr(h.students), color: AttendanceColors.unmarked, dense: true),
                   ],
@@ -470,7 +480,7 @@ class _HalaqaCard extends StatelessWidget {
                       children: absentees.isEmpty
                           ? [
                               const TextSpan(
-                                text: 'ما غاب حدا',
+                                text: 'لم يغب أحد',
                                 style: TextStyle(color: AttendanceColors.present, fontWeight: FontWeight.bold),
                               ),
                             ]

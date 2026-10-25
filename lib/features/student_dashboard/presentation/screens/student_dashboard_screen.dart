@@ -8,8 +8,11 @@ import '../../../../core/constants/quran_metadata.dart';
 import '../../../../core/widgets/points_display.dart';
 import '../../../../core/extensions/points_formatting.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
+import '../../../auth/presentation/widgets/logout_dialog.dart';
 import '../../../points/data/points_api.dart';
 import '../../../recitation/data/recitation_api.dart';
+import '../../../recitation/data/recitation_timeline.dart';
+import '../../../recitation/presentation/widgets/course_section_header.dart';
 import '../../../azkar/presentation/screens/azkar_home_screen.dart';
 import '../../../announcement/presentation/screens/announcement_list_screen.dart';
 import '../../../quran_reader/presentation/screens/quran_surah_list_screen.dart';
@@ -47,7 +50,11 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen>
   List<Map<String, dynamic>> _announcements = [];
   bool _hasNewAnnouncements = false;
   List<Map<String, dynamic>> _gifts = [];
+  /// Every Quran recitation, all courses, current course first.
   List<Map<String, dynamic>> _recitationHistory = [];
+
+  /// The same recitations split by course for «سجل التسميع».
+  List<CourseSection> _recitationSections = const [];
   List<Map<String, dynamic>> _pointsLog = [];
   List<Map<String, dynamic>> _leaderboard = [];
   Map<String, int> _attendance = {'present': 0, 'late': 0, 'absent': 0};
@@ -181,8 +188,14 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen>
     } catch (_) {}
   }
 
+  // Every course, current first. A parent's account cannot list courses, so
+  // each earlier course is captioned with its dates.
   Future<void> _loadRecitationHistory() async {
-    try { _recitationHistory = await _recitationApi.getStudentHistory(_studentId!); } catch (_) {}
+    try {
+      final timeline = await _recitationApi.getStudentTimeline(_studentId!);
+      _recitationSections = timeline.sections;
+      _recitationHistory = timeline.allRecitations;
+    } catch (_) {}
   }
 
   Future<void> _loadHadithProgress() async {
@@ -341,7 +354,7 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen>
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-          IconButton(onPressed: () => context.read<AuthProvider>().logout(), icon: const Icon(Icons.logout, color: Colors.white70, size: 20), padding: EdgeInsets.zero, constraints: const BoxConstraints()),
+          IconButton(tooltip: '\u062a\u0633\u062c\u064a\u0644 \u0627\u0644\u062e\u0631\u0648\u062c', onPressed: () => confirmLogout(context), icon: const Icon(Icons.logout_rounded, color: Colors.white70, size: 20), padding: EdgeInsets.zero, constraints: const BoxConstraints()),
           const SizedBox(width: 8),
           IconButton(onPressed: () { setState(() => _isLoading = true); _loadAllData(); }, icon: const Icon(Icons.refresh, color: Colors.white70, size: 20), padding: EdgeInsets.zero, constraints: const BoxConstraints()),
         ]),
@@ -981,9 +994,34 @@ class _StudentDashboardScreenState extends State<StudentDashboardScreen>
             const Text('\u0633\u062c\u0644 \u0627\u0644\u062a\u0633\u0645\u064a\u0639', style: TextStyle(fontFamily: 'Cairo', fontSize: 18, fontWeight: FontWeight.bold, color: TaqwaColors.domeBlue)),
             const Spacer(), Text('${_recitationHistory.length}', style: TextStyle(fontFamily: 'Cairo', fontSize: 14, color: Colors.grey.shade500)),
           ])),
-          Expanded(child: ListView.builder(padding: const EdgeInsets.symmetric(horizontal: 16), itemCount: _recitationHistory.length,
-              itemBuilder: (_, i) => _recitationRow(_recitationHistory[i], showFullDate: true))),
+          Expanded(child: _buildRecitationSheetList()),
         ]))));
+  }
+
+  /// A band per course (current first), then that course's recitations.
+  Widget _buildRecitationSheetList() {
+    final rows = <Object?>[]; // CourseSection · recitation Map · null = empty course
+    for (final section in _recitationSections) {
+      if (section.recitations.isEmpty && !section.isCurrent) continue;
+      rows.add(section);
+      if (section.recitations.isEmpty) {
+        rows.add(null);
+      } else {
+        rows.addAll(section.recitations);
+      }
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+      itemCount: rows.length,
+      itemBuilder: (_, i) {
+        final row = rows[i];
+        if (row is CourseSection) {
+          return CourseSectionHeader(section: row, isFirst: i == 0, count: row.recitations.length);
+        }
+        if (row == null) return const EmptyCourseNote();
+        return _recitationRow(row as Map<String, dynamic>, showFullDate: true);
+      },
+    );
   }
 
   // ═══════════════════════════════════════════════════════

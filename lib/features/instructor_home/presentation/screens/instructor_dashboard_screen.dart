@@ -4,6 +4,7 @@ import '../../../../core/theme/taqwa_colors.dart';
 import '../../../../core/network/api_client.dart';
 import '../../../../core/utils/meeting_days.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
+import '../../../auth/presentation/widgets/logout_dialog.dart';
 import '../../../attendance_stats/data/attendance_stats_api.dart';
 import '../../../attendance_stats/data/attendance_stats_models.dart';
 import '../../../recitation/data/recitation_api.dart';
@@ -390,10 +391,9 @@ class _InstructorDashboardScreenState extends State<InstructorDashboardScreen> {
                                         onChanged: _loadDashboard),
                                     const Spacer(),
                                     IconButton(
-                                      onPressed: () {
-                                        context.read<AuthProvider>().logout();
-                                      },
-                                      icon: const Icon(Icons.logout,
+                                      tooltip: 'تسجيل الخروج',
+                                      onPressed: () => confirmLogout(context),
+                                      icon: const Icon(Icons.logout_rounded,
                                           color: Colors.white70, size: 22),
                                       padding: EdgeInsets.zero,
                                       constraints: const BoxConstraints(),

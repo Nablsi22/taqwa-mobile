@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../instructor_home/presentation/screens/instructor_student_detail_screen.dart';
+import 'help/supervisor_help.dart';
 
 /// Opens a student's page exactly as his أستاذ sees it — information,
 /// attendance calendar, recitation history with ratings, points, memorisation,
@@ -21,6 +22,7 @@ void openStudentPage(
         studentName: name,
         initialTab: tab,
         readOnly: true,
+        onHelp: () => showSupervisorHelp(context, HelpTopic.studentPage),
       ),
     ),
   );

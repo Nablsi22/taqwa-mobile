@@ -11,8 +11,7 @@ import '../../../quran_reader/presentation/screens/quran_surah_list_screen.dart'
 import 'admin_students_by_instructor_screen.dart';
 import 'admin_instructor_attendance_screen.dart';
 import 'admin_leaderboard_screen.dart';
-import '../../../auth/presentation/providers/auth_provider.dart';
-import 'package:provider/provider.dart';
+import '../../../auth/presentation/widgets/logout_dialog.dart';
 import 'admin_manage_students_screen.dart';
 import 'admin_manage_instructors_screen.dart';
 import '../../../../core/widgets/taqwa_slogan_banner.dart';
@@ -711,41 +710,6 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
     );
   }
 
-  void _showLogoutDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (ctx) => Directionality(
-        textDirection: TextDirection.rtl,
-        child: AlertDialog(
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: const Text('تسجيل الخروج',
-              style:
-                  TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
-          content: const Text('هل تريد تسجيل الخروج من التطبيق؟',
-              style: TextStyle(fontFamily: 'Cairo')),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('إلغاء',
-                  style: TextStyle(fontFamily: 'Cairo', color: Colors.grey)),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red,
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10)),
-              ),
-              onPressed: () {
-                Navigator.pop(ctx);
-                context.read<AuthProvider>().logout();
-              },
-              child: const Text('خروج',
-                  style: TextStyle(fontFamily: 'Cairo', color: Colors.white)),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  void _showLogoutDialog(BuildContext context) => confirmLogout(context);
+
 }

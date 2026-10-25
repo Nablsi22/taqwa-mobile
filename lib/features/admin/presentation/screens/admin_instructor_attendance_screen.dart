@@ -884,7 +884,7 @@ class _AdminInstructorAttendanceScreenState
           children: [
             Icon(Icons.history, size: 64, color: Colors.grey.shade300),
             const SizedBox(height: 12),
-            const Text('لا يوجد بيانات',
+            const Text('لا توجد بيانات',
                 style: TextStyle(
                     fontFamily: 'Cairo', fontSize: 16, color: Colors.grey)),
             const SizedBox(height: 4),
@@ -1075,7 +1075,7 @@ class _AdminInstructorAttendanceScreenState
                       Icon(Icons.event_note,
                           size: 48, color: Colors.grey.shade300),
                       const SizedBox(height: 8),
-                      const Text('لا يوجد سجلات بعد',
+                      const Text('لا توجد سجلات بعد',
                           style: TextStyle(
                               fontFamily: 'Cairo', color: Colors.grey)),
                     ],

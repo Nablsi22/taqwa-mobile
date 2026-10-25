@@ -376,7 +376,7 @@ class _HalaqaAttendanceScreenState extends State<HalaqaAttendanceScreen> {
           chip(_Filter.regular, 'ثابت', AttendanceColors.present),
           chip(_Filter.irregular, 'متذبذب', AttendanceColors.irregular),
           chip(_Filter.inactive, 'منقطع', AttendanceColors.absent),
-          chip(_Filter.needsCall, 'يحتاج اتصال', AttendanceColors.absent),
+          chip(_Filter.needsCall, 'يحتاج إلى اتصال', AttendanceColors.absent),
         ],
       ),
     );

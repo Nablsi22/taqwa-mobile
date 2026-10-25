@@ -4,6 +4,7 @@ import '../../attendance_stats/data/attendance_stats_models.dart';
 import '../../attendance_stats/presentation/attendance_ui.dart';
 import '../../substitute/presentation/substitute_ui.dart';
 import '../data/supervisor_models.dart';
+import 'help/supervisor_help.dart';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Shared look of the course director's screens.
@@ -52,35 +53,39 @@ SessionLook sessionLook(SessionRecord s) {
   }
   if (s.recorded) {
     final lag = s.lagDays ?? 0;
-    if (lag <= 0) return const SessionLook(DisciplineColors.onTime, '✓', 'سجّل بنفس اليوم');
+    if (lag <= 0) return const SessionLook(DisciplineColors.onTime, '✓', 'سجّل في اليوم نفسه');
     if (lag == 1) return SessionLook(DisciplineColors.dayLate, '+1', lagLabel(lag));
     return SessionLook(DisciplineColors.veryLate, '+$lag', lagLabel(lag));
   }
   if (s.kind != DayKind.mandatory) {
-    return const SessionLook(DisciplineColors.notDue, '—', 'يوم اختياري · ما بينحسب', onDark: false);
+    return const SessionLook(DisciplineColors.notDue, '—', 'يوم اختياري · لا يُحتسب', onDark: false);
   }
-  return const SessionLook(DisciplineColors.missed, '✕', 'ما سجّل');
+  return const SessionLook(DisciplineColors.missed, '✕', 'لم يسجّل');
 }
 
 /// «سجّل بعد يوم» · «بعد يومين» · «بعد 3 أيام» · «بعد 11 يوماً»
 String lagLabel(int? lag) {
-  if (lag == null) return 'ما سجّل';
-  if (lag <= 0) return 'سجّل بنفس اليوم';
+  if (lag == null) return 'لم يسجّل';
+  if (lag <= 0) return 'سجّل في اليوم نفسه';
   if (lag == 1) return 'سجّل بعد يوم';
   if (lag == 2) return 'سجّل بعد يومين';
   if (lag <= 10) return 'سجّل بعد $lag أيام';
   return 'سجّل بعد $lag يوماً';
 }
 
-/// The average lag in words: «بنفس اليوم بالعادة» · «يتأخر يوم وشي».
+/// The average lag in words: «يسجّل في اليوم نفسه» · «يتأخر يوماً في المتوسط».
 String avgLagLabel(double? avg) {
-  if (avg == null) return 'ما في تسجيل';
-  if (avg < 0.25) return 'بيسجّل بنفس اليوم';
-  if (avg < 0.75) return 'بيتأخر أحياناً';
-  if (avg < 1.25) return 'بيتأخر يوم بالمعدل';
-  if (avg < 1.75) return 'بيتأخر يوم ونص بالمعدل';
+  if (avg == null) return 'لا يوجد تسجيل';
+  if (avg < 0.25) return 'يسجّل في اليوم نفسه';
+  if (avg < 0.75) return 'يتأخر أحياناً';
+  if (avg < 1.25) return 'يتأخر يوماً في المتوسط';
+  if (avg < 1.75) return 'يتأخر يوماً ونصفاً في المتوسط';
   final days = avg.round();
-  return days == 2 ? 'بيتأخر يومين بالمعدل' : 'بيتأخر $days أيام بالمعدل';
+  return days == 2
+      ? 'يتأخر يومين في المتوسط'
+      : days <= 10
+          ? 'يتأخر $days أيام في المتوسط'
+          : 'يتأخر $days يوماً في المتوسط';
 }
 
 /// '2026-10-17T16:40' → «4:40 عصراً».
@@ -107,13 +112,13 @@ String clockAr(String? localStamp) {
   return '$h12:$m $period';
 }
 
-/// When it was recorded, relative to the session: «نفس اليوم · 4:40 عصراً»,
+/// When it was recorded, relative to the session: «في اليوم نفسه · 4:40 عصراً»,
 /// or for a late one «الثلاثاء 13/10 · 9:40 مساءً».
 String recordedWhen(String? localStamp, String sessionDate) {
   if (localStamp == null || localStamp.length < 10) return '';
   final day = localStamp.substring(0, 10);
   final clock = clockAr(localStamp);
-  if (day == sessionDate) return 'نفس اليوم · $clock';
+  if (day == sessionDate) return 'في اليوم نفسه · $clock';
   return '${dayLabel(day)} · $clock';
 }
 
@@ -166,7 +171,7 @@ class DisciplineStrip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (sessions.isEmpty) {
-      return const QuietNote(text: 'ما في جلسات إلزامية بالدورة لهلق');
+      return const QuietNote(text: 'لا توجد جلسات إلزامية في الدورة حتى الآن');
     }
     return Row(
       children: [
@@ -250,10 +255,10 @@ class DisciplineLegend extends StatelessWidget {
       spacing: 12,
       runSpacing: 6,
       children: [
-        item(DisciplineColors.onTime, 'نفس اليوم'),
+        item(DisciplineColors.onTime, 'في اليوم نفسه'),
         item(DisciplineColors.dayLate, 'بعد يوم'),
-        item(DisciplineColors.veryLate, 'بعد يومين+'),
-        item(DisciplineColors.missed, 'ما سجّل'),
+        item(DisciplineColors.veryLate, 'بعد يومين أو أكثر'),
+        item(DisciplineColors.missed, 'لم يسجّل'),
         item(DisciplineColors.covered, 'بالنيابة'),
       ],
     );
@@ -329,27 +334,38 @@ class SupervisorState extends StatelessWidget {
   }
 }
 
-/// A section heading inside a screen.
+/// A section heading inside a screen, with an optional «شرح» chip that
+/// explains the section in plain words.
 class SectionTitle extends StatelessWidget {
-  const SectionTitle(this.text, {super.key, this.color, this.count});
+  const SectionTitle(this.text, {super.key, this.color, this.count, this.help});
 
   final String text;
   final Color? color;
   final int? count;
+  final HelpTopic? help;
 
   @override
   Widget build(BuildContext context) {
+    final label = Text(
+      count == null ? text : '$text · $count',
+      style: TextStyle(
+        fontFamily: 'Cairo',
+        fontSize: 13,
+        fontWeight: FontWeight.bold,
+        color: color ?? Colors.grey.shade700,
+      ),
+    );
     return Padding(
       padding: const EdgeInsets.fromLTRB(4, 18, 4, 8),
-      child: Text(
-        count == null ? text : '$text · $count',
-        style: TextStyle(
-          fontFamily: 'Cairo',
-          fontSize: 12.5,
-          fontWeight: FontWeight.bold,
-          color: color ?? Colors.grey.shade700,
-        ),
-      ),
+      child: help == null
+          ? label
+          : Row(
+              children: [
+                Flexible(child: label),
+                const SizedBox(width: 8),
+                HelpChip(help!),
+              ],
+            ),
     );
   }
 }

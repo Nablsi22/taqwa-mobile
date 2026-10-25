@@ -7,10 +7,12 @@ import '../../../attendance/data/repositories/attendance_repository.dart';
 import '../../../attendance/presentation/providers/attendance_provider.dart';
 import '../../../attendance/presentation/screens/attendance_screen.dart';
 import '../../../attendance_stats/presentation/attendance_ui.dart';
-import '../../../instructor_home/presentation/screens/maqraa_screen.dart';
 import '../../data/substitute_api.dart';
+import '../../data/substitute_groups.dart';
 import '../../data/substitute_models.dart';
 import '../substitute_ui.dart';
+import '../widgets/group_picker_sheet.dart';
+import 'substitute_students_screen.dart';
 
 /// ═════════════════════════════════════════════════════════════════════════
 /// «حلقات أخرى» — recording for a حلقة that is not yours.
@@ -23,7 +25,10 @@ import '../substitute_ui.dart';
 ///   • the student stays with his own instructor — nothing here reassigns
 ///     anybody — and the record keeps who marked it;
 ///   • «استلمت هالحلقة اليوم» tells the evening reminder who covered, even
-///     before anything has been recorded.
+///     before anything has been recorded;
+///   • an absent teacher's students may be shared out between several
+///     teachers: each one claims the حلقة and ticks «طلابي اليوم», and from
+///     then on records only those (see `SubstituteGroups`).
 ///
 /// On a server that predates `/substitute` the screen says so in one calm
 /// line instead of showing an error.
@@ -62,6 +67,9 @@ class _OtherHalaqasScreenState extends State<OtherHalaqasScreen> {
   /// spinner without freezing the rest of the list.
   final Set<String> _busy = {};
 
+  /// «طلابي اليوم» per حلقة, kept on this phone for the day.
+  Map<String, Set<String>> _groups = const {};
+
   @override
   void initState() {
     super.initState();
@@ -75,9 +83,14 @@ class _OtherHalaqasScreenState extends State<OtherHalaqasScreen> {
     });
     try {
       final res = await _api.getHalaqas(date: widget.date);
+      final groups = await SubstituteGroups.readAll(
+        res.date.isNotEmpty ? res.date : (widget.date ?? isoDay(DateTime.now())),
+      );
+      // The same day _date will report once the result is in.
       if (!mounted) return;
       setState(() {
         _result = res;
+        _groups = groups;
         _loading = false;
       });
     } on SubstituteUnavailable {
@@ -95,7 +108,11 @@ class _OtherHalaqasScreenState extends State<OtherHalaqasScreen> {
     }
   }
 
-  String get _date => _result?.date ?? widget.date ?? isoDay(DateTime.now());
+  String get _date {
+    final served = _result?.date;
+    if (served != null && served.isNotEmpty) return served;
+    return widget.date ?? isoDay(DateTime.now());
+  }
 
   void _toast(String message, {bool bad = false}) {
     if (!mounted) return;
@@ -121,7 +138,10 @@ class _OtherHalaqasScreenState extends State<OtherHalaqasScreen> {
         _toast('تم التراجع عن استلام حلقة أ. ${halaqa.instructorName}');
       } else {
         await _api.claim(halaqa.instructorId, date: _date);
-        _toast('تم تسجيل استلامك لحلقة أ. ${halaqa.instructorName}');
+        final others = halaqa.othersCovering(widget.myInstructorId);
+        _toast(others.isEmpty
+            ? 'تم تسجيل استلامك لحلقة أ. ${halaqa.instructorName}'
+            : 'تم تسجيل استلامك · الحلقة موزّعة، فحدّد طلابك منها');
       }
       await _load();
     } catch (e) {
@@ -132,6 +152,56 @@ class _OtherHalaqasScreenState extends State<OtherHalaqasScreen> {
   }
 
   // ── Recording ──────────────────────────────────────────────────────────
+
+  /// How every by-proxy screen of [halaqa] is told whose it is, for which
+  /// day, and who else is covering it today.
+  SubstituteMode _modeFor(OtherHalaqa halaqa) => SubstituteMode(
+        halaqaInstructorId: halaqa.instructorId,
+        instructorName: halaqa.instructorName,
+        date: _date,
+        sharedWith: [
+          for (final o in halaqa.othersCovering(widget.myInstructorId)) o.name,
+        ],
+      );
+
+  Future<HalaqaRoster?> _fetchRoster(OtherHalaqa halaqa) async {
+    setState(() => _busy.add(halaqa.instructorId));
+    try {
+      final roster = await _api.getRoster(
+        halaqa.instructorId,
+        date: _date,
+        termId: widget.termId,
+      );
+      if (roster.students.isEmpty) {
+        _toast('لا يوجد طلاب في هذه الحلقة', bad: true);
+        return null;
+      }
+      return roster;
+    } catch (e) {
+      _toast(e.toString(), bad: true);
+      return null;
+    } finally {
+      if (mounted) setState(() => _busy.remove(halaqa.instructorId));
+    }
+  }
+
+  /// «طلابي اليوم» from the card itself.
+  Future<void> _chooseGroup(OtherHalaqa halaqa) async {
+    final roster = await _fetchRoster(halaqa);
+    if (!mounted || roster == null) return;
+    final picked = await showSubstituteGroupPicker(
+      context,
+      instructorName: halaqa.instructorName,
+      students: [
+        for (final s in roster.students) PickableStudent(id: s.studentId, name: s.displayName),
+      ],
+      initial: _groups[halaqa.instructorId],
+    );
+    if (picked == null || !mounted) return;
+    await SubstituteGroups.write(halaqa.instructorId, _date, picked);
+    final groups = await SubstituteGroups.readAll(_date);
+    if (mounted) setState(() => _groups = groups);
+  }
 
   /// The ordinary attendance sheet, pointed at another حلقة and wearing the
   /// by-proxy colours. The server stores the mark under this instructor.
@@ -145,51 +215,24 @@ class _OtherHalaqasScreenState extends State<OtherHalaqasScreen> {
             instructorId: halaqa.instructorId,
             initialDate: _date,
           ),
-          child: AttendanceScreen(
-            substitute: SubstituteMode(
-              halaqaInstructorId: halaqa.instructorId,
-              instructorName: halaqa.instructorName,
-            ),
-          ),
+          child: AttendanceScreen(substitute: _modeFor(halaqa)),
         ),
       ),
     ).then((_) => _load());
   }
 
-  /// Recitation by proxy. The roster is fetched first because المقرأة works
-  /// from a list of students, and a substitute is given names only.
+  /// Recitation by proxy: the حلقة's students (names only), each one
+  /// opening his own recitation form, with المقرأة الجماعية on top.
   Future<void> _recordRecitation(OtherHalaqa halaqa) async {
-    setState(() => _busy.add(halaqa.instructorId));
-    HalaqaRoster? roster;
-    try {
-      roster = await _api.getRoster(
-        halaqa.instructorId,
-        date: _date,
-        termId: widget.termId,
-      );
-    } catch (e) {
-      _toast(e.toString(), bad: true);
-    } finally {
-      if (mounted) setState(() => _busy.remove(halaqa.instructorId));
-    }
+    final roster = await _fetchRoster(halaqa);
     if (!mounted || roster == null) return;
-    if (roster.students.isEmpty) {
-      _toast('لا يوجد طلاب في هذه الحلقة', bad: true);
-      return;
-    }
 
     await Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => MaqraaScreen(
-          students: roster!.students
-              .map((s) => s.toStudentMap())
-              .toList(growable: false),
-          instructorId: halaqa.instructorId,
-          substitute: SubstituteMode(
-            halaqaInstructorId: halaqa.instructorId,
-            instructorName: halaqa.instructorName,
-          ),
+        builder: (_) => SubstituteStudentsScreen(
+          roster: roster,
+          mode: _modeFor(halaqa),
         ),
       ),
     );
@@ -285,10 +328,13 @@ class _OtherHalaqasScreenState extends State<OtherHalaqasScreen> {
           _HalaqaCard(
             halaqa: h,
             others: h.othersCovering(widget.myInstructorId),
+            myGroup: _groups[h.instructorId]?.length,
             busy: _busy.contains(h.instructorId),
             onToggleCoverage: () => _toggleCoverage(h),
             onAttendance: () => _recordAttendance(h),
             onRecitation: () => _recordRecitation(h),
+            onChooseGroup: () => _chooseGroup(h),
+            mode: _modeFor(h),
           ),
           const SizedBox(height: 12),
         ],
@@ -296,6 +342,12 @@ class _OtherHalaqasScreenState extends State<OtherHalaqasScreen> {
         const QuietNote(
           text: 'الطالب يبقى في حلقته مع أستاذه؛ ما تسجّله يُحفظ باسمك كمسجِّل '
               'ويظهر في إحصائيات حلقته.',
+        ),
+        const SizedBox(height: 8),
+        const QuietNote(
+          icon: Icons.call_split_rounded,
+          text: 'إن توزّع طلاب الأستاذ الغائب على أكثر من أستاذ، فليستلمها كلٌّ '
+              'منهم ويحدّد «طلابي» منها؛ فيسجّل كلٌّ طلابه دون أن يمسّ طلاب غيره.',
         ),
       ],
     );
@@ -389,18 +441,26 @@ class _HalaqaCard extends StatelessWidget {
   const _HalaqaCard({
     required this.halaqa,
     required this.others,
+    required this.myGroup,
     required this.busy,
     required this.onToggleCoverage,
     required this.onAttendance,
     required this.onRecitation,
+    required this.onChooseGroup,
+    required this.mode,
   });
 
   final OtherHalaqa halaqa;
   final List<CoveringInstructor> others;
+
+  /// How many of its students this substitute ticked as his; null → all.
+  final int? myGroup;
   final bool busy;
   final VoidCallback onToggleCoverage;
   final VoidCallback onAttendance;
   final VoidCallback onRecitation;
+  final VoidCallback onChooseGroup;
+  final SubstituteMode mode;
 
   @override
   Widget build(BuildContext context) {
@@ -514,6 +574,17 @@ class _HalaqaCard extends StatelessWidget {
             ),
           ],
 
+          // «طلابي اليوم» — once he has taken the حلقة (or a share of it).
+          if (mine || myGroup != null) ...[
+            const SizedBox(height: 10),
+            SubstituteGroupStrip(
+              mine: myGroup,
+              total: halaqa.students,
+              mode: mode,
+              onChoose: busy ? null : onChooseGroup,
+            ),
+          ],
+
           const SizedBox(height: 12),
           Row(
             children: [
@@ -558,7 +629,11 @@ class _HalaqaCard extends StatelessWidget {
                       size: 18,
                     ),
               label: Text(
-                mine ? 'تراجع عن الاستلام' : 'استلمت هالحلقة اليوم',
+                mine
+                    ? 'تراجع عن الاستلام'
+                    : (others.isEmpty
+                        ? 'استلمتُ هذه الحلقة اليوم'
+                        : 'استلمتُ جزءاً منها أيضاً'),
                 style: const TextStyle(
                   fontFamily: 'Cairo',
                   fontSize: 12.5,

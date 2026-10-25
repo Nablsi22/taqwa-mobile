@@ -144,7 +144,7 @@ class _InstructorPointsScreenState extends State<InstructorPointsScreen> {
       });
 
       if (isEarn) {
-        _showMessage('تم إضافة +${amount.abs()} نقطة لـ $studentName ($description)');
+        _showMessage('تمت إضافة +${amount.abs()} نقطة لـ $studentName ($description)');
       } else {
         _showMessage(
           'تم خصم -${amount.abs()} نقطة من $studentName ($description)',
@@ -658,7 +658,7 @@ class _InstructorPointsScreenState extends State<InstructorPointsScreen> {
                           CircularProgressIndicator(
                               color: TaqwaColors.domeBlue),
                           SizedBox(height: 16),
-                          Text('جارِ تطبيق النقاط...',
+                          Text('جارٍ تطبيق النقاط...',
                               style: TextStyle(
                                   fontFamily: 'Cairo',
                                   fontSize: 14,

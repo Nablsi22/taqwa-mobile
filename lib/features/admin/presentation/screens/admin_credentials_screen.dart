@@ -287,7 +287,7 @@ class _AdminCredentialsScreenState extends State<AdminCredentialsScreen> {
               CircularProgressIndicator(color: TaqwaColors.domeBlue),
               SizedBox(height: 16),
               Text(
-                'جاري إنشاء بيانات الدخول الجديدة...\nقد يستغرق هذا بضع لحظات.',
+                'جارٍ إنشاء بيانات الدخول الجديدة...\nقد يستغرق هذا بضع لحظات.',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontFamily: 'Cairo', fontSize: 13),
               ),

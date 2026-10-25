@@ -110,13 +110,15 @@ class SubstituteBanner extends StatelessWidget {
   }
 }
 
-/// What the attendance screen needs to know to render itself as by-proxy.
+/// What a by-proxy screen needs to know to render itself as by-proxy.
 /// Absent (null) → the instructor's own حلقة, unchanged in every way.
 @immutable
 class SubstituteMode {
   const SubstituteMode({
     required this.halaqaInstructorId,
     required this.instructorName,
+    this.date,
+    this.sharedWith = const [],
   });
 
   /// The حلقة being recorded — the instructor its students belong to.
@@ -124,4 +126,121 @@ class SubstituteMode {
 
   /// Shown in the banner: «تسجيل بالنيابة عن أ. فلان».
   final String instructorName;
+
+  /// The day being recorded (YYYY-MM-DD) — the key of «طلابي اليوم»
+  /// (`SubstituteGroups`). Absent → that choice is not offered.
+  final String? date;
+
+  /// The other teachers who also said «استلمتُ هذه الحلقة اليوم»: the
+  /// absent teacher's students are shared out between them. Empty → this
+  /// substitute is the only one.
+  final List<String> sharedWith;
+
+  bool get isShared => sharedWith.isNotEmpty;
+
+  /// «أ. فلان» · «أ. فلان و أ. فلان» · «أ. فلان و 2 آخرين».
+  String get sharedWithAr {
+    if (sharedWith.isEmpty) return '';
+    if (sharedWith.length == 1) return 'أ. ${sharedWith.first}';
+    if (sharedWith.length == 2) {
+      return 'أ. ${sharedWith[0]} وأ. ${sharedWith[1]}';
+    }
+    return 'أ. ${sharedWith.first} و${sharedWith.length - 1} آخرين';
+  }
+}
+
+/// «طلابك منها اليوم» — a one-line strip that says which of the حلقة's
+/// students this substitute is recording, with the way to change it.
+///
+/// [onDark] places it on the violet header rather than on a white card.
+class SubstituteGroupStrip extends StatelessWidget {
+  const SubstituteGroupStrip({
+    super.key,
+    required this.mine,
+    required this.total,
+    required this.onChoose,
+    this.mode,
+    this.onDark = false,
+  });
+
+  /// Students chosen; null → the whole حلقة.
+  final int? mine;
+  final int total;
+  final VoidCallback? onChoose;
+
+  /// Supplies who else covers today, for the «موزّعة» wording.
+  final SubstituteMode? mode;
+  final bool onDark;
+
+  @override
+  Widget build(BuildContext context) {
+    final shared = mode?.isShared ?? false;
+    final warn = shared && mine == null;
+    final fg = onDark ? Colors.white : SubstituteColors.header;
+
+    final String text;
+    if (mine != null) {
+      text = 'طلابك منها اليوم: $mine من $total';
+    } else if (warn) {
+      text = 'موزّعة اليوم مع ${mode!.sharedWithAr} — حدّد طلابك منها';
+    } else {
+      text = 'معك الحلقة كاملة · إن توزّع طلابها فحدّد طلابك';
+    }
+
+    return Container(
+      padding: const EdgeInsetsDirectional.fromSTEB(12, 4, 4, 4),
+      decoration: BoxDecoration(
+        color: onDark
+            ? Colors.white.withValues(alpha: warn ? 0.20 : 0.12)
+            : (warn ? const Color(0xFFFFF6E5) : SubstituteColors.surface),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: onDark
+              ? Colors.white.withValues(alpha: 0.28)
+              : (warn
+                  ? const Color(0xFFE59866).withValues(alpha: 0.6)
+                  : SubstituteColors.accent.withValues(alpha: 0.22)),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            warn ? Icons.call_split_rounded : Icons.groups_2_outlined,
+            size: 18,
+            color: warn && !onDark ? const Color(0xFFB9770E) : fg,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(
+                fontFamily: 'Cairo',
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                height: 1.5,
+                color: warn && !onDark ? const Color(0xFF7E5109) : fg,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: onChoose,
+            style: TextButton.styleFrom(
+              foregroundColor: fg,
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              minimumSize: const Size(0, 34),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: Text(
+              mine == null ? 'تحديد طلابي' : 'تعديل',
+              style: const TextStyle(
+                fontFamily: 'Cairo',
+                fontSize: 12.5,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }

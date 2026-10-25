@@ -4,6 +4,7 @@ import '../../../attendance_stats/data/attendance_stats_models.dart';
 import '../../../attendance_stats/presentation/attendance_ui.dart';
 import '../../data/supervisor_api.dart';
 import '../supervisor_ui.dart';
+import '../help/supervisor_help.dart';
 import '../../../instructor_home/presentation/screens/instructor_student_detail_screen.dart';
 import '../supervisor_navigation.dart';
 
@@ -86,7 +87,7 @@ class _SupervisorStudentsTabState extends State<SupervisorStudentsTab> {
 
     final students = _result!.students;
     if (students.isEmpty) {
-      return SupervisorState(icon: Icons.school_outlined, title: 'ما في طلاب بالدورة', onRetry: _load);
+      return SupervisorState(icon: Icons.school_outlined, title: 'لا يوجد طلاب في الدورة', onRetry: _load);
     }
 
     int count(AttendanceClass c) => students.where((s) => s.classification == c).length;
@@ -113,17 +114,24 @@ class _SupervisorStudentsTabState extends State<SupervisorStudentsTab> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                '${studentsAr(students.length)} · خارجهم «عزل»',
-                style: const TextStyle(
-                  fontFamily: 'Cairo',
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                  color: AttendanceColors.ink,
-                ),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '${studentsAr(students.length)} · باستثناء «عزل»',
+                      style: const TextStyle(
+                        fontFamily: 'Cairo',
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: AttendanceColors.ink,
+                      ),
+                    ),
+                  ),
+                  const HelpChip(HelpTopic.students),
+                ],
               ),
               Text(
-                'آخر 4 أسابيع · «ثابت» = ما فوّت أكثر من جلسة إلزامية وحدة',
+                'آخر 4 أسابيع · «ثابت» = لم يفوّت أكثر من جلسة إلزامية واحدة',
                 style: TextStyle(fontFamily: 'Cairo', fontSize: 11.5, color: Colors.grey.shade600, height: 1.7),
               ),
               const SizedBox(height: 12),
@@ -157,13 +165,13 @@ class _SupervisorStudentsTabState extends State<SupervisorStudentsTab> {
                 text: count(AttendanceClass.noData) == 0
                     ? '${studentsAr(active)} نشِط.'
                     : '${studentsAr(active)} نشِط. و${studentsAr(count(AttendanceClass.noData))} '
-                        'ما منعرف عنهم شي لأن حلقاتهم ما بتسجّل.',
+                        'لا تتوفر عنهم معلومات لأن حلقاتهم لا تسجّل الحضور.',
               ),
             ],
           ),
         ),
         if (needsCall.isNotEmpty) ...[
-          SectionTitle('بدّهم اتصال', color: AttendanceColors.absent, count: needsCall.length),
+          SectionTitle('يحتاجون إلى اتصال', color: AttendanceColors.absent, count: needsCall.length, help: HelpTopic.needsCall),
           _ByInstructor(
             students: needsCall,
             names: names,
@@ -178,7 +186,7 @@ class _SupervisorStudentsTabState extends State<SupervisorStudentsTab> {
           AttendanceClass.regular,
         ])
           if (count(c) > 0) ...[
-            SectionTitle(classStyle(c).label, color: classStyle(c).color, count: count(c)),
+            SectionTitle(classStyle(c).label, color: classStyle(c).color, count: count(c), help: HelpTopic.studentClasses),
             _ByInstructor(
               students: students.where((s) => s.classification == c).toList(),
               names: names,

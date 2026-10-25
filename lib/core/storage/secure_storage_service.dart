@@ -61,4 +61,28 @@ class SecureStorageService {
     await _delete(_accessTokenKey);
     await _delete(_refreshTokenKey);
   }
+
+  // ── Small per-device settings (e.g. "the guided tour was seen"). They are
+  //    not cleared on sign-out, so a tour is shown once per phone. A read
+  //    that fails returns null, so a broken keystore never blocks a screen. ──
+
+  Future<String?> readSetting(String key) async {
+    try {
+      return await _read(key);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> writeSetting(String key, String value) async {
+    try {
+      await _write(key, value);
+    } catch (_) {}
+  }
+
+  Future<void> deleteSetting(String key) async {
+    try {
+      await _delete(key);
+    } catch (_) {}
+  }
 }

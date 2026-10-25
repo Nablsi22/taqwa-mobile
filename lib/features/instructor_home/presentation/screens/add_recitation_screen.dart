@@ -6,6 +6,7 @@ import '../../../../core/constants/quran_ayat_metadata.dart';
 import '../../../recitation/data/recitation_api.dart';
 import '../../../../core/network/api_client.dart';
 import '../../../terms/presentation/widgets/term_selector.dart';
+import '../../../substitute/presentation/substitute_ui.dart';
 
 // ╔═══════════════════════════════════════════════════════════════════╗
 // WHY THERE IS NO "WHOLE SURA" MODE ANY MORE
@@ -91,10 +92,17 @@ class AddRecitationScreen extends StatefulWidget {
   final String studentId;
   final String studentName;
 
+  /// Recording for a student of another حلقة («استلام حلقة»): the same form,
+  /// in the by-proxy violet and under a banner naming his teacher, so it is
+  /// never taken for one of your own students. The recitation is filed
+  /// under you as the one who heard it, exactly as المقرأة by proxy is.
+  final SubstituteMode? substitute;
+
   const AddRecitationScreen({
     super.key,
     required this.studentId,
     required this.studentName,
+    this.substitute,
   });
 
   @override
@@ -393,14 +401,18 @@ class _AddRecitationScreenState extends State<AddRecitationScreen> {
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
-        backgroundColor: const Color(0xFFF5F6FA),
+        backgroundColor: widget.substitute != null
+            ? SubstituteColors.surface
+            : const Color(0xFFF5F6FA),
         appBar: AppBar(
           title: Text('تسميع - ${widget.studentName}',
               style: const TextStyle(
                   fontFamily: 'Cairo',
                   fontWeight: FontWeight.bold,
                   fontSize: 16)),
-          backgroundColor: TaqwaColors.domeBlue,
+          backgroundColor: widget.substitute != null
+              ? SubstituteColors.header
+              : TaqwaColors.domeBlue,
           foregroundColor: Colors.white,
           elevation: 0,
         ),
@@ -409,6 +421,14 @@ class _AddRecitationScreenState extends State<AddRecitationScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              if (widget.substitute != null) ...[
+                SubstituteBanner(
+                  instructorName: widget.substitute!.instructorName,
+                  subtitle: 'الطالب من حلقته · يُحفظ التسميع باسمك ويظهر في سجله',
+                  onSurface: true,
+                ),
+                const SizedBox(height: 12),
+              ],
               _buildModeToggle(),
               const SizedBox(height: 12),
               // Which course this entry is filed under — always the ACTIVE
@@ -1122,7 +1142,7 @@ class _AddRecitationScreenState extends State<AddRecitationScreen> {
               const SizedBox(width: 10),
               Expanded(
                 child: (isFirst && _loadingSuggestion)
-                    ? Text('جاري الاقتراح...',
+                    ? Text('جارٍ الاقتراح...',
                         style: TextStyle(
                             fontFamily: 'Cairo',
                             fontSize: 14,

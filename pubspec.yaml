@@ -1,7 +1,7 @@
 name: taqwa_mobile
 description: "A new Flutter project."
 publish_to: 'none'
-version: 1.0.10+12
+version: 1.0.13+15
 environment:
   sdk: ^3.10.4
 
@@ -55,6 +55,10 @@ flutter:
     - family: AmiriQuran
       fonts:
         - asset: assets/fonts/AmiriQuran-Regular.ttf
+    - family: Amiri
+      fonts:
+        - asset: assets/fonts/Amiri-Bold.ttf
+          weight: 700
 
 flutter_launcher_icons:
   ios: true

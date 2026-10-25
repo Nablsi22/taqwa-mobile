@@ -3,7 +3,9 @@ import 'package:provider/provider.dart';
 import '../../../../core/theme/taqwa_colors.dart';
 import '../../../../core/utils/meeting_days.dart';
 import '../../../attendance_stats/presentation/attendance_ui.dart';
+import '../../../substitute/data/substitute_groups.dart';
 import '../../../substitute/presentation/substitute_ui.dart';
+import '../../../substitute/presentation/widgets/group_picker_sheet.dart';
 import '../../data/models/attendance_sheet_model.dart';
 import '../providers/attendance_provider.dart';
 
@@ -31,6 +33,10 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
   Color get _accent =>
       _byProxy ? SubstituteColors.header : TaqwaColors.domeBlue;
 
+  /// By proxy with «طلابي اليوم» chosen: the rest of the حلقة is folded
+  /// away below, still reachable one by one.
+  bool _showRest = false;
+
   @override
   void initState() {
     super.initState();
@@ -39,7 +45,37 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       if (provider.sheet == null) {
         provider.loadSheet();
       }
+      _loadGroup();
     });
+  }
+
+  /// The students this substitute chose for the day on screen, if any.
+  Future<void> _loadGroup() async {
+    if (!_byProxy) return;
+    final provider = context.read<AttendanceProvider>();
+    final date = provider.selectedDate;
+    final group = await SubstituteGroups.read(_substitute!.halaqaInstructorId, date);
+    if (!mounted || provider.selectedDate != date) return;
+    provider.setScope(group);
+  }
+
+  Future<void> _chooseGroup() async {
+    final provider = context.read<AttendanceProvider>();
+    final sheet = provider.sheet;
+    if (sheet == null || sheet.students.isEmpty) return;
+    final picked = await showSubstituteGroupPicker(
+      context,
+      instructorName: _substitute!.instructorName,
+      students: [
+        for (final s in sheet.students) PickableStudent(id: s.studentId, name: s.fullName),
+      ],
+      initial: provider.scope,
+    );
+    if (picked == null || !mounted) return;
+    await SubstituteGroups.write(_substitute!.halaqaInstructorId, provider.selectedDate, picked);
+    if (!mounted) return;
+    provider.setScope(picked);
+    setState(() => _showRest = false);
   }
 
   Future<void> _pickDate() async {
@@ -62,7 +98,8 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     );
 
     if (picked != null) {
-      provider.changeDate(isoDay(picked));
+      await provider.changeDate(isoDay(picked));
+      await _loadGroup();
     }
   }
 
@@ -147,7 +184,12 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                   final note = dayKindNote(provider.dayKind);
                   final sheet = provider.sheet;
                   final unmarked = provider.unmarkedCount;
-                  final noneMarked = sheet != null && unmarked == sheet.students.length;
+                  final noneMarked = sheet != null && unmarked == provider.scopedStudents.length;
+                  // A shared حلقة with no «طلابي» chosen: one tap on «الكل
+                  // غائب» would mark another teacher's students, so the bulk
+                  // buttons wait until this substitute says who is his.
+                  final bulkLocked =
+                      _byProxy && _substitute!.isShared && provider.scope == null;
                   return Column(
                     children: [
                       // Whose حلقة this is — said before the date, because it
@@ -156,6 +198,14 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                         SubstituteBanner(
                           instructorName: _substitute!.instructorName,
                           subtitle: 'الطلاب يبقون في حلقتهم · يُحفظ باسمك كمسجِّل',
+                        ),
+                        const SizedBox(height: 8),
+                        SubstituteGroupStrip(
+                          mine: provider.scope?.length,
+                          total: sheet?.students.length ?? 0,
+                          mode: _substitute,
+                          onDark: true,
+                          onChoose: sheet == null || sheet.students.isEmpty ? null : _chooseGroup,
                         ),
                         const SizedBox(height: 12),
                       ],
@@ -197,8 +247,20 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                         _DayKindBanner(text: note),
                       ],
                       const SizedBox(height: 12),
-                      // Quick mark buttons
-                      Row(
+                      if (bulkLocked)
+                        Text(
+                          'تظهر أزرار «الكل حاضر» بعد تحديد طلابك، كي لا تُسجِّل طلاب غيرك.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontFamily: 'Cairo',
+                            fontSize: 11.5,
+                            height: 1.6,
+                            color: Colors.white.withValues(alpha: 0.85),
+                          ),
+                        )
+                      else
+                        // Quick mark buttons
+                        Row(
                         children: [
                           _QuickButton(
                             label: 'الكل حاضر',
@@ -297,14 +359,41 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                     );
                   }
 
-                  return ListView.builder(
+                  final scope = provider.scope;
+                  if (scope == null) {
+                    return ListView.builder(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 80),
+                      itemCount: provider.sheet!.students.length,
+                      itemBuilder: (context, index) {
+                        final student = provider.sheet!.students[index];
+                        final currentStatus = provider.getStatus(student.studentId);
+                        return _buildStudentCard(student, currentStatus, provider);
+                      },
+                    );
+                  }
+
+                  // «طلابي اليوم» first; the rest of the حلقة folded below.
+                  final mine = provider.scopedStudents;
+                  final rest = provider.sheet!.students
+                      .where((s) => !scope.contains(s.studentId))
+                      .toList(growable: false);
+                  return ListView(
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 80),
-                    itemCount: provider.sheet!.students.length,
-                    itemBuilder: (context, index) {
-                      final student = provider.sheet!.students[index];
-                      final currentStatus = provider.getStatus(student.studentId);
-                      return _buildStudentCard(student, currentStatus, provider);
-                    },
+                    children: [
+                      _SectionLabel(text: 'طلابك اليوم (${mine.length})'),
+                      for (final s in mine)
+                        _buildStudentCard(s, provider.getStatus(s.studentId), provider),
+                      if (rest.isNotEmpty) ...[
+                        _RestToggle(
+                          count: rest.length,
+                          open: _showRest,
+                          onTap: () => setState(() => _showRest = !_showRest),
+                        ),
+                        if (_showRest)
+                          for (final s in rest)
+                            _buildStudentCard(s, provider.getStatus(s.studentId), provider),
+                      ],
+                    ],
                   );
                 },
               ),
@@ -327,7 +416,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                     )
                   : const Icon(Icons.save, color: Colors.white),
               label: Text(
-                provider.isSaving ? 'جاري الحفظ...' : 'حفظ الحضور',
+                provider.isSaving ? 'جارٍ الحفظ...' : 'حفظ الحضور',
                 style: const TextStyle(
                   fontFamily: 'Cairo',
                   fontWeight: FontWeight.bold,
@@ -342,10 +431,9 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
   }
 
   Widget _buildStatsBar(AttendanceProvider provider) {
-    final sheet = provider.sheet!;
     int present = 0, lateCount = 0, absent = 0, excused = 0, unmarked = 0;
 
-    for (final student in sheet.students) {
+    for (final student in provider.scopedStudents) {
       final status = provider.getStatus(student.studentId);
       switch (status) {
         case 'PRESENT':
@@ -773,6 +861,88 @@ class _DayKindBanner extends StatelessWidget {
 }
 
 // ── Quick Action Button ──
+/// «طلابك اليوم (7)» above a substitute's own share of the sheet.
+class _SectionLabel extends StatelessWidget {
+  const _SectionLabel({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsetsDirectional.fromSTEB(4, 4, 4, 8),
+      child: Row(
+        children: [
+          const Icon(Icons.groups_2_rounded, size: 18, color: SubstituteColors.header),
+          const SizedBox(width: 8),
+          Text(
+            text,
+            style: const TextStyle(
+              fontFamily: 'Cairo',
+              fontSize: 13.5,
+              fontWeight: FontWeight.bold,
+              color: SubstituteColors.header,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// «بقية طلاب الحلقة» — folded, because another teacher records them.
+class _RestToggle extends StatelessWidget {
+  const _RestToggle({required this.count, required this.open, required this.onTap});
+
+  final int count;
+  final bool open;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 6, bottom: 10),
+      child: Material(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: SubstituteColors.accent.withValues(alpha: 0.22)),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.people_outline_rounded, size: 18, color: Colors.grey.shade600),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'بقية طلاب الحلقة ($count) · يسجّلهم غيرك عادةً',
+                    style: TextStyle(
+                      fontFamily: 'Cairo',
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.grey.shade700,
+                    ),
+                  ),
+                ),
+                AnimatedRotation(
+                  turns: open ? 0.5 : 0,
+                  duration: const Duration(milliseconds: 200),
+                  child: Icon(Icons.expand_more_rounded, color: Colors.grey.shade600),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _QuickButton extends StatelessWidget {
   final String label;
   final Color color;

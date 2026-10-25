@@ -15,7 +15,7 @@ class AppStrings {
   static const String passwordRequired = 'الرجاء إدخال كلمة المرور';
   static const String loginFailed = 'فشل تسجيل الدخول';
   static const String invalidCredentials = 'اسم المستخدم أو كلمة المرور غير صحيحة';
-  static const String loggingIn = 'جاري تسجيل الدخول...';
+  static const String loggingIn = 'جارٍ تسجيل الدخول...';
 
   // أخطاء الشبكة
   static const String connectionTimeout = 'انتهت مهلة الاتصال. تحقق من اتصالك بالإنترنت';
@@ -112,7 +112,7 @@ class AppStrings {
   static const String delete = 'حذف';
   static const String edit = 'تعديل';
   static const String noData = 'لا توجد بيانات';
-  static const String loading = 'جاري التحميل...';
+  static const String loading = 'جارٍ التحميل...';
   static const String error = 'حدث خطأ';
   static const String retry = 'إعادة المحاولة';
   static const String success = 'تمت العملية بنجاح';

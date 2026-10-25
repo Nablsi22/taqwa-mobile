@@ -310,7 +310,7 @@ class _CredentialsDialogState extends State<CredentialsDialog>
           Text(
             widget.isNewStudent
                 ? 'تم إنشاء الحساب بنجاح'
-                : 'تم إعادة تعيين كلمة المرور',
+                : 'تمت إعادة تعيين كلمة المرور',
             style: const TextStyle(
               fontFamily: 'Cairo',
               fontSize: 17,

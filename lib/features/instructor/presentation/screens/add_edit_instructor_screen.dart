@@ -150,7 +150,7 @@ class _AddEditInstructorScreenState extends State<AddEditInstructorScreen> {
           content: Text(
             widget.isEditing
                 ? 'تم تحديث بيانات المعلم بنجاح'
-                : 'تم إضافة المعلم بنجاح',
+                : 'تمت إضافة المعلم بنجاح',
             style: const TextStyle(fontFamily: 'Cairo'),
           ),
           backgroundColor: Colors.green,

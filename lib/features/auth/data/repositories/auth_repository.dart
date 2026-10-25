@@ -80,7 +80,7 @@ class AuthRepository {
       case DioExceptionType.sendTimeout:
         return 'انتهت مهلة الاتصال. تحقق من اتصالك بالإنترنت';
       case DioExceptionType.connectionError:
-        return 'لا يوجد اتصال بالإنترنت ܗ تحقّق من الشبكة وأعد المحاولة';
+        return 'لا يوجد اتصال بالإنترنت — تحقّق من الشبكة وأعد المحاولة';
       case DioExceptionType.badResponse:
         final statusCode = e.response?.statusCode;
         if (statusCode == 401) {

@@ -8,6 +8,7 @@ import '../../data/supervisor_api.dart';
 import '../../data/supervisor_models.dart';
 import '../supervisor_navigation.dart';
 import '../supervisor_ui.dart';
+import '../help/supervisor_help.dart';
 import 'supervisor_halaqa_screen.dart';
 
 /// One أستاذ, everything about his حلقة, read-only, in three tabs:
@@ -52,6 +53,7 @@ class SupervisorInstructorScreen extends StatelessWidget {
             backgroundColor: TaqwaColors.domeBlue,
             foregroundColor: Colors.white,
             elevation: 0,
+            actions: const [HelpAppBarButton(HelpTopic.instructorPage)],
             bottom: const TabBar(
               indicatorColor: TaqwaColors.minaretGold,
               indicatorWeight: 3,
@@ -156,7 +158,7 @@ class _AttendanceTabState extends State<_AttendanceTab> with AutomaticKeepAliveC
       final h = _halaqaOf(day);
       if (h == null) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('ما في بيانات لهالحلقة بهاليوم', style: TextStyle(fontFamily: 'Cairo'))),
+          const SnackBar(content: Text('لا توجد بيانات لهذه الحلقة في هذا اليوم', style: TextStyle(fontFamily: 'Cairo'))),
         );
       } else {
         await Navigator.push(
@@ -190,7 +192,7 @@ class _AttendanceTabState extends State<_AttendanceTab> with AutomaticKeepAliveC
     final detail = _detail!;
     final d = detail.discipline;
     if (d == null) {
-      return const SupervisorState(icon: Icons.groups_2_outlined, title: 'هالحلقة مو ضمن الدورة الحالية');
+      return const SupervisorState(icon: Icons.groups_2_outlined, title: 'هذه الحلقة ليست ضمن الدورة الحالية');
     }
     final presenceByDate = {for (final p in _presence) p.date: p};
     final lastDate = _lastDay?.date;
@@ -217,10 +219,10 @@ class _AttendanceTabState extends State<_AttendanceTab> with AutomaticKeepAliveC
         const SizedBox(height: 12),
         _Summary(d: d),
         if (_presence.isNotEmpty) ...[
-          const SectionTitle('حضور الأستاذ (من الإدارة)'),
+          const SectionTitle('حضور الأستاذ (من الإدارة)', help: HelpTopic.teacherPresence),
           _PresenceCard(presence: _presence),
         ],
-        const SectionTitle('سجل الأستاذ بأيام الدوام'),
+        const SectionTitle('سجل الأستاذ في أيام الدوام', help: HelpTopic.teacherRecord),
         SoftCard(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
           child: Column(
@@ -236,7 +238,7 @@ class _AttendanceTabState extends State<_AttendanceTab> with AutomaticKeepAliveC
             ],
           ),
         ),
-        SectionTitle('التزام طلابه بالحضور', count: detail.students.length),
+        SectionTitle('التزام طلابه بالحضور', count: detail.students.length, help: HelpTopic.studentsCommitment),
         _Students(students: detail.students),
       ],
     );
@@ -261,13 +263,20 @@ class _LastSessionCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            '${isToday ? 'جلسة اليوم' : 'آخر جلسة'} · ${dayLabel(date)}${optional ? ' · اختياري' : ''}',
-            style: TextStyle(fontFamily: 'Cairo', fontSize: 12, color: Colors.grey.shade600),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '${isToday ? 'جلسة اليوم' : 'آخر جلسة'} · ${dayLabel(date)}${optional ? ' · اختياري' : ''}',
+                  style: TextStyle(fontFamily: 'Cairo', fontSize: 12, color: Colors.grey.shade600),
+                ),
+              ),
+              const HelpChip(HelpTopic.lastSession),
+            ],
           ),
           const SizedBox(height: 6),
           if (h == null)
-            const QuietNote(text: 'هالحلقة ما إلها طلاب بهالدورة')
+            const QuietNote(text: 'لا يوجد طلاب في هذه الحلقة ضمن هذه الدورة')
           else if (!h.recorded)
             Row(
               children: [
@@ -275,7 +284,7 @@ class _LastSessionCard extends StatelessWidget {
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
-                    'ما سجّل حضور هالجلسة لهلق · ${studentsAr(h.students)}',
+                    'لم يُسجَّل حضور هذه الجلسة بعد · ${studentsAr(h.students)}',
                     style: const TextStyle(
                       fontFamily: 'Cairo',
                       fontSize: 14,
@@ -453,9 +462,9 @@ class _Summary extends StatelessWidget {
             runSpacing: 6,
             children: [
               if (d.missedCount > 0)
-                TintPill(label: 'ما سجّل ${sessionsAr(d.missedCount)}', color: DisciplineColors.missed),
+                TintPill(label: 'لم يسجّل ${sessionsAr(d.missedCount)}', color: DisciplineColors.missed),
               if (d.sameDayCount > 0)
-                TintPill(label: 'بنفس اليوم ${d.sameDayCount}', color: DisciplineColors.onTime),
+                TintPill(label: 'في اليوم نفسه ${d.sameDayCount}', color: DisciplineColors.onTime),
               if (d.lateCount > 0)
                 TintPill(label: 'متأخر ${d.lateCount}', color: DisciplineColors.veryLate),
               if (d.coveredCount > 0)
@@ -496,7 +505,7 @@ class _SessionRow extends StatelessWidget {
     } else if (s.recorded) {
       detail = '${recordedWhen(s.recordedAt, s.date)} · ${s.marks} طالب';
     } else if (optional) {
-      detail = 'اختياري · ما بينحسب';
+      detail = 'اختياري · لا يُحتسب';
     } else {
       detail = '—';
     }
@@ -504,9 +513,9 @@ class _SessionRow extends StatelessWidget {
     if (s.recorded && s.byOther) {
       pill = 'بالنيابة';
     } else if (s.recorded) {
-      pill = (s.lagDays ?? 0) <= 0 ? 'بوقتها' : lagLabel(s.lagDays).replaceFirst('سجّل ', '');
+      pill = (s.lagDays ?? 0) <= 0 ? 'في وقتها' : lagLabel(s.lagDays).replaceFirst('سجّل ', '');
     } else {
-      pill = optional ? 'ما في' : 'ما سجّل';
+      pill = optional ? 'لا يوجد' : 'لم يسجّل';
     }
     final p = presence;
 
@@ -564,7 +573,7 @@ class _SessionRow extends StatelessWidget {
                       padding: EdgeInsetsDirectional.only(start: 6),
                       child: SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
                     )
-                  : Icon(Icons.chevron_left_rounded, size: 18, color: Colors.grey.shade400),
+                  : Icon(Icons.chevron_right_rounded, size: 18, color: Colors.grey.shade400),
           ],
         ),
       ),
@@ -580,7 +589,7 @@ class _Students extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (students.isEmpty) {
-      return const SoftCard(child: QuietNote(text: 'ما في طلاب بهالحلقة'));
+      return const SoftCard(child: QuietNote(text: 'لا يوجد طلاب في هذه الحلقة'));
     }
     final names = displayNames(students.map(
       (s) => (id: s.studentId, fullName: s.fullName, fatherName: s.fatherName),
@@ -625,7 +634,7 @@ class _Students extends StatelessWidget {
           if (students.any((s) => s.needsCall))
             QuietNote(
               icon: Icons.phone_in_talk_rounded,
-              text: 'بدّهم اتصال: ${students.where((s) => s.needsCall).map(name).join(' · ')}',
+              text: 'يحتاجون إلى اتصال: ${students.where((s) => s.needsCall).map(name).join(' · ')}',
             ),
         ],
       ),
@@ -751,7 +760,7 @@ class _StudentsTabState extends State<_StudentsTab> with AutomaticKeepAliveClien
       return SupervisorState(icon: Icons.error_outline_rounded, title: _error!, onRetry: _load);
     }
     if (_roster.isEmpty) {
-      return const SupervisorState(icon: Icons.groups_2_outlined, title: 'ما في طلاب بهالحلقة');
+      return const SupervisorState(icon: Icons.groups_2_outlined, title: 'لا يوجد طلاب في هذه الحلقة');
     }
 
     final schools = _options(_schoolOf);
@@ -764,8 +773,9 @@ class _StudentsTabState extends State<_StudentsTab> with AutomaticKeepAliveClien
     final deducted = visible.fold<double>(0, (t, s) => t + s.pointsDeducted);
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
+      padding: const EdgeInsets.fromLTRB(14, 0, 14, 24),
       children: [
+        const SectionTitle('طلاب الحلقة', help: HelpTopic.roster),
         SoftCard(
           padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
           child: Column(
@@ -835,7 +845,7 @@ class _StudentsTabState extends State<_StudentsTab> with AutomaticKeepAliveClien
               ),
               const SizedBox(height: 8),
               Text(
-                '${studentsAr(visible.length)} · كسبوا +${numAr(gained)} · انخصم منهم ${numAr(deducted.abs())}',
+                '${studentsAr(visible.length)} · اكتسبوا +${numAr(gained)} · خُصم منهم ${numAr(deducted.abs())}',
                 style: TextStyle(fontFamily: 'Cairo', fontSize: 12, color: Colors.grey.shade700),
               ),
             ],
@@ -843,7 +853,7 @@ class _StudentsTabState extends State<_StudentsTab> with AutomaticKeepAliveClien
         ),
         const SizedBox(height: 10),
         if (visible.isEmpty)
-          const SoftCard(child: QuietNote(text: 'ما في طلاب بهالفلتر'))
+          const SoftCard(child: QuietNote(text: 'لا يوجد طلاب مطابقون للتصفية'))
         else
           for (var i = 0; i < visible.length; i++)
             _RosterCard(
@@ -1001,7 +1011,7 @@ class _RosterCard extends StatelessWidget {
                           if (a != null)
                             TintPill(
                               label: a.course.sessions == 0
-                                  ? 'ما في جلسات بعد'
+                                  ? 'لا توجد جلسات بعد'
                                   : 'حضر ${a.course.attended} من ${a.course.sessions}',
                               color: AttendanceColors.unmarked,
                               dense: true,
@@ -1025,7 +1035,7 @@ class _RosterCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 4),
-                Icon(Icons.chevron_left_rounded, color: Colors.grey.shade400, size: 20),
+                Icon(Icons.chevron_right_rounded, color: Colors.grey.shade400, size: 20),
               ],
             ),
           ),
@@ -1171,8 +1181,9 @@ class _RecitationsTabState extends State<_RecitationsTab> with AutomaticKeepAliv
     }
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
+      padding: const EdgeInsets.fromLTRB(14, 0, 14, 24),
       children: [
+        const SectionTitle('تسميع الحلقة يوماً بيوم', help: HelpTopic.recitations),
         SoftCard(
           padding: const EdgeInsets.fromLTRB(6, 6, 6, 10),
           child: Column(
@@ -1186,7 +1197,8 @@ class _RecitationsTabState extends State<_RecitationsTab> with AutomaticKeepAliv
                             setState(() => _day = prev);
                             _load();
                           },
-                    icon: const Icon(Icons.chevron_right_rounded),
+                    // Icons mirror in RTL: chevron_left is drawn pointing right.
+                    icon: const Icon(Icons.chevron_left_rounded),
                     tooltip: 'يوم الدوام السابق',
                   ),
                   Expanded(
@@ -1196,7 +1208,7 @@ class _RecitationsTabState extends State<_RecitationsTab> with AutomaticKeepAliv
                       child: Padding(
                         padding: const EdgeInsets.symmetric(vertical: 6),
                         child: Text(
-                          _month ? 'آخر 30 يوم' : dayLabel(r.to),
+                          _month ? 'آخر 30 يوماً' : dayLabel(r.to),
                           textAlign: TextAlign.center,
                           style: const TextStyle(
                             fontFamily: 'Cairo',
@@ -1215,7 +1227,7 @@ class _RecitationsTabState extends State<_RecitationsTab> with AutomaticKeepAliv
                             setState(() => _day = next);
                             _load();
                           },
-                    icon: const Icon(Icons.chevron_left_rounded),
+                    icon: const Icon(Icons.chevron_right_rounded),
                     tooltip: 'يوم الدوام التالي',
                   ),
                 ],
@@ -1237,7 +1249,7 @@ class _RecitationsTabState extends State<_RecitationsTab> with AutomaticKeepAliv
                     visualDensity: VisualDensity.compact,
                   ),
                   ChoiceChip(
-                    label: const Text('آخر 30 يوم'),
+                    label: const Text('آخر 30 يوماً'),
                     selected: _month,
                     showCheckmark: false,
                     onSelected: (_) {
@@ -1253,7 +1265,7 @@ class _RecitationsTabState extends State<_RecitationsTab> with AutomaticKeepAliv
               const SizedBox(height: 6),
               Text(
                 items.isEmpty
-                    ? 'ما في تسميع مسجّل'
+                    ? 'لا يوجد تسميع مسجّل'
                     : widget.studentsCount > 0
                         ? 'سمّع $students من أصل ${studentsAr(widget.studentsCount)} · ${items.length} تسميع'
                         : '${studentsAr(students)} سمّعوا · ${items.length} تسميع',

@@ -17,17 +17,24 @@ class StudentRecitationsEnvelope {
   /// on one timeline. Empty when the backend predates the field.
   final List<Map<String, dynamic>> hadithEntries;
 
+  /// The course the server read: the active one when the request named
+  /// none, `null` for «every course» (`termId=0`) or on an older server.
+  final int? termId;
+
   const StudentRecitationsEnvelope({
     required this.history,
     required this.lastRecitation,
     this.hadithEntries = const [],
+    this.termId,
   });
 
   factory StudentRecitationsEnvelope.fromJson(Map<String, dynamic> json) {
     final rawHistory = (json['data'] as List?) ?? const [];
     final rawLast = json['lastRecitation'];
     final rawHadith = (json['hadithEntries'] as List?) ?? const [];
+    final rawTerm = json['termId'];
     return StudentRecitationsEnvelope(
+      termId: rawTerm == null ? null : _toInt(rawTerm),
       history: rawHistory
           .map((e) => Map<String, dynamic>.from(e as Map))
           .toList(growable: false),
